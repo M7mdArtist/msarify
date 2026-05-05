@@ -1,0 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-zinc-100 antialiased;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Prevent selection on buttons for better mobile feel */
+  button {
+    @apply select-none active:scale-95 transition-transform cursor-pointer;
+  }
+}
+
+@layer components {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .glass-card {
+    @apply bg-zinc-900/50 backdrop-blur-xl border border-white/10;
+  }
+
+  .nav-blur {
+    @apply bg-zinc-950/80 backdrop-blur-2xl border-t border-white/5;
+  }
+}
+
