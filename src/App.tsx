@@ -21,7 +21,9 @@ import {
   User as UserIcon,
   CreditCard,
   ArrowRightLeft,
-  Lock
+  Lock,
+  Smartphone,
+  ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -80,6 +82,7 @@ export default function App() {
   const [newPassword, setNewPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   
@@ -797,6 +800,23 @@ export default function App() {
               </button>
             </div>
 
+            <button 
+              onClick={() => setShowInstallGuide(true)}
+              className="w-full flex items-center justify-center gap-4 p-8 bg-zinc-900 rounded-[3rem] border border-white/5 hover:border-blue-500/30 transition-all group overflow-hidden relative active:scale-95 shadow-xl"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
+              <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400 group-hover:scale-110 transition-transform">
+                <Smartphone size={32} />
+              </div>
+              <div className="flex-1 text-right">
+                <h4 className="font-black text-white text-lg">تثبيت التطبيق على الآيفون</h4>
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">دليل الخطوات لسهولة الوصول</p>
+              </div>
+              <div className="p-3 bg-zinc-800 rounded-xl text-zinc-600">
+                <ChevronRight size={20} />
+              </div>
+            </button>
+
             {/* Password Change Section */}
             <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6">
               <div className="flex items-center gap-3">
@@ -1029,8 +1049,89 @@ export default function App() {
             onRefresh={refreshData}
           />
         )}
+        {showInstallGuide && (
+          <InstallGuideModal onClose={() => setShowInstallGuide(false)} />
+        )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function InstallGuideModal({ onClose }: { onClose: () => void }) {
+  const steps = [
+    {
+      title: "الخطوة الأولى",
+      desc: "اضغط على زر المشاركة في متصفح سفاري بالأسفل",
+      img: "/iphone-step1.png"
+    },
+    {
+      title: "الخطوة الثانية",
+      desc: "انزل للأسفل واضغط على 'إضافة إلى الشاشة الرئيسية'",
+      img: "/iphone-step2.png"
+    },
+    {
+      title: "الخطوة الثالثة",
+      desc: "اضغط على 'إضافة' في الزاوية العلوية وسيكون جاهزاً",
+      img: "/iphone-step3.png"
+    }
+  ];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-950/95 backdrop-blur-2xl"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0, y: 30 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[85vh]"
+      >
+        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
+          <div>
+            <h2 className="text-xl font-black text-white">تثبيت التطبيق</h2>
+            <p className="text-[10px] text-zinc-500 font-bold">خطوات بسيطة ليصبح التطبيق على جوالك</p>
+          </div>
+          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 space-y-12 custom-scrollbar" dir="rtl">
+          {steps.map((s, i) => (
+            <div key={i} className="space-y-4 text-center">
+              <div className="flex items-center justify-center gap-3 mb-2">
+                <span className="w-8 h-8 rounded-full bg-white text-zinc-950 flex items-center justify-center font-black text-sm">
+                  {i + 1}
+                </span>
+                <h3 className="font-black text-white">{s.title}</h3>
+              </div>
+              <p className="text-zinc-400 text-xs font-bold leading-relaxed">{s.desc}</p>
+              <div className="bg-zinc-950 rounded-[2rem] border border-white/5 overflow-hidden aspect-[9/16] relative">
+                <img 
+                  src={s.img} 
+                  alt={s.title} 
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://placehold.co/1080x1920/18181b/ffffff?text=Image+${i+1}`;
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+          
+          <div className="pt-4 text-center">
+            <button 
+              onClick={onClose}
+              className="w-full py-5 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all"
+            >
+              فهمت، شكراً!
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
