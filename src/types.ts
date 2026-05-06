@@ -67,6 +67,7 @@ export interface UserProfile {
   savingsFund?: number;
   hasSeenTutorial?: boolean;
   isAdmin?: boolean;
+  siriToken?: string;
 }
 
 export interface AppNotification {

@@ -891,6 +891,67 @@ export default function App() {
               </div>
             </button>
 
+            {/* Siri Integration Section */}
+            <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6 overflow-hidden relative group overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-400 border border-blue-500/10">
+                    <Smartphone size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-white text-sm">تكامل سيري (Siri)</h3>
+                    <p className="text-[10px] text-blue-500/50 font-bold uppercase tracking-wider">
+                      الإدخال الصوتي السريع
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-4 relative z-10">
+                <div className="p-5 bg-zinc-950 rounded-[1.5rem] border border-white/5 space-y-3">
+                  <p className="text-[10px] text-zinc-500 font-bold text-center">مفتاح الوصول الخاص بسيري</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={user?.siriToken || 'لم يتم إنشاء مفتاح بعد'}
+                      className="flex-1 bg-transparent text-center font-mono text-xs text-blue-400 outline-none"
+                    />
+                    {user?.siriToken && (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(user.siriToken);
+                          alert('تم نسخ المفتاح!');
+                        }}
+                        className="p-2 bg-zinc-900 rounded-lg text-zinc-500 hover:text-white transition-colors"
+                      >
+                        <CreditCard size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/user/siri-token', {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+                      });
+                      const data = await res.json();
+                      if (data.siriToken) {
+                        setUser({ ...user, siriToken: data.siriToken });
+                      }
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  }}
+                  className="w-full py-5 bg-blue-600 text-white font-black rounded-[2rem] active:scale-95 transition-all text-sm shadow-xl"
+                >
+                  {user?.siriToken ? 'تجديد المفتاح السري' : 'إنشاء مفتاح الوصول'}
+                </button>
+              </div>
+            </div>
+
             {/* Password Change Section */}
             <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6">
               <div className="flex items-center gap-3">
@@ -1140,14 +1201,16 @@ export default function App() {
             onRefresh={refreshData}
           />
         )}
-        {showInstallGuide && <InstallGuideModal onClose={() => setShowInstallGuide(false)} />}
+        {showInstallGuide && <InstallGuideModal user={user} onClose={() => setShowInstallGuide(false)} />}
       </AnimatePresence>
     </div>
   );
 }
 
-function InstallGuideModal({ onClose }: { onClose: () => void }) {
-  const steps = [
+function InstallGuideModal({ user, onClose }: { user: any; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'iphone' | 'siri'>('iphone');
+
+  const iphoneSteps = [
     {
       title: 'الخطوة الأولى',
       desc: 'اضغط على زر المشاركة في متصفح سفاري بالأسفل',
@@ -1165,6 +1228,25 @@ function InstallGuideModal({ onClose }: { onClose: () => void }) {
     },
   ];
 
+  const siriSteps = [
+    {
+      title: 'تطبيق Shortcuts',
+      desc: "افتح تطبيق 'الاختصارات' (Shortcuts) على جوالك وأنشئ اختصاراً جديداً",
+    },
+    {
+      title: 'إملاء النص',
+      desc: "أضف إجراء 'Dictate Text' (إملاء النص) واجعل اللغة العربية/الإنجليزية",
+    },
+    {
+      title: 'جلب محتويات الرابط',
+      desc: "أضف إجراء 'Get Contents of URL' وضع الرابط: " + window.location.origin + '/api/quick-add',
+    },
+    {
+      title: 'الإعدادات التقنية',
+      desc: "اجعل الطريقة (Method) هي POST، وأضف Header باسم 'x-api-key' وضَع فيه مفتاحك الخاص من الإعدادات، وفي Body اجعل JSON يحتوي على مفتاح 'text' قيمته هي 'Dictated Text'",
+    },
+  ];
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -1177,46 +1259,95 @@ function InstallGuideModal({ onClose }: { onClose: () => void }) {
         animate={{ scale: 1, opacity: 1, y: 0 }}
         className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[85vh]"
       >
-        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
-          <div>
-            <h2 className="text-xl font-black text-white">تثبيت التطبيق</h2>
-            <p className="text-[10px] text-zinc-500 font-bold">خطوات بسيطة ليصبح التطبيق على جوالك</p>
+        <div className="p-8 border-b border-white/5 space-y-6 sticky top-0 bg-zinc-900 z-10">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-black text-white">دليل الاستخدام</h2>
+              <p className="text-[10px] text-zinc-500 font-bold">كل ما تحتاجه للوصول السريع</p>
+            </div>
+            <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
+              <X size={24} />
+            </button>
           </div>
-          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
-            <X size={24} />
-          </button>
+
+          <div className="flex p-1 bg-zinc-950 rounded-2xl border border-white/5">
+            <button
+              onClick={() => setActiveTab('iphone')}
+              className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${activeTab === 'iphone' ? 'bg-white text-zinc-950 shadow-lg' : 'text-zinc-500'}`}
+            >
+              كتطبيق iPhone
+            </button>
+            <button
+              onClick={() => setActiveTab('siri')}
+              className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${activeTab === 'siri' ? 'bg-white text-zinc-950 shadow-lg' : 'text-zinc-500'}`}
+            >
+              عبر Siri
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 space-y-12 custom-scrollbar" dir="rtl">
-          {steps.map((s, i) => (
-            <div key={i} className="space-y-4 text-center">
-              <div className="flex items-center justify-center gap-3 mb-2">
-                <span className="w-8 h-8 rounded-full bg-white text-zinc-950 flex items-center justify-center font-black text-sm">
-                  {i + 1}
-                </span>
-                <h3 className="font-black text-white">{s.title}</h3>
+          {activeTab === 'iphone' ? (
+            iphoneSteps.map((s, i) => (
+              <div key={i} className="space-y-4 text-center">
+                <div className="flex items-center justify-center gap-3 mb-2">
+                  <span className="w-8 h-8 rounded-full bg-white text-zinc-950 flex items-center justify-center font-black text-sm">
+                    {i + 1}
+                  </span>
+                  <h3 className="font-black text-white">{s.title}</h3>
+                </div>
+                <p className="text-zinc-400 text-xs font-bold leading-relaxed">{s.desc}</p>
+                <div className="bg-zinc-950 rounded-[2rem] border border-white/5 overflow-hidden aspect-[9/16] relative">
+                  <img
+                    src={s.img}
+                    alt={s.title}
+                    className="w-full h-full object-cover"
+                    onError={e => {
+                      (e.target as HTMLImageElement).src =
+                        `https://placehold.co/1080x1920/18181b/ffffff?text=Image+${i + 1}`;
+                    }}
+                  />
+                </div>
               </div>
-              <p className="text-zinc-400 text-xs font-bold leading-relaxed">{s.desc}</p>
-              <div className="bg-zinc-950 rounded-[2rem] border border-white/5 overflow-hidden aspect-[9/16] relative">
-                <img
-                  src={s.img}
-                  alt={s.title}
-                  className="w-full h-full object-cover"
-                  onError={e => {
-                    (e.target as HTMLImageElement).src =
-                      `https://placehold.co/1080x1920/18181b/ffffff?text=Image+${i + 1}`;
-                  }}
-                />
-              </div>
+            ))
+          ) : (
+            <div className="space-y-8">
+              {siriSteps.map((s, i) => (
+                <div key={i} className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-black text-xs">
+                    {i + 1}
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <h4 className="font-black text-white text-sm">{s.title}</h4>
+                    <p className="text-zinc-400 text-[11px] font-bold leading-relaxed">{s.desc}</p>
+                    {i === 3 && (
+                      <div className="mt-4 p-4 bg-zinc-950 rounded-2xl border border-white/5 space-y-2">
+                        <p className="text-[9px] text-zinc-500 font-black uppercase">مفتاحك الشخصي</p>
+                        <div
+                          onClick={() => {
+                            if (user?.siriToken) {
+                              navigator.clipboard.writeText(user.siriToken);
+                              alert('تم نسخ المفتاح!');
+                            }
+                          }}
+                          className="font-mono text-[10px] text-blue-400 break-all cursor-pointer hover:text-blue-300 transition-colors"
+                        >
+                          {user?.siriToken || 'يرجى إنشاء مفتاح من الإعدادات أولاً'}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
 
           <div className="pt-4 text-center">
             <button
               onClick={onClose}
-              className="w-full py-5 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all"
+              className="w-full py-5 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl"
             >
-              فهمت، شكراً!
+              فهمت، جاهز!
             </button>
           </div>
         </div>
