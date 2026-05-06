@@ -145,7 +145,7 @@ export default function App() {
   };
 
   // Derived Values
-  const walletBalances = transactions.reduce((acc, t) => {
+  const walletBalances = transactions.reduce((acc: Record<string, number>, t) => {
     if (t.type === 'income') {
       acc[t.wallet] += t.amount;
     } else if (t.type === 'expense') {
@@ -155,7 +155,12 @@ export default function App() {
       acc[t.toWallet] += t.amount;
     }
     return acc;
-  }, { cash: initialBalances.cash, bank: initialBalances.bank });
+  }, { 
+    cash: initialBalances.cash, 
+    bank: initialBalances.bank,
+    emergency: extraFunds.emergency,
+    savings: extraFunds.savings
+  });
 
   const totalExpenses = transactions
     .filter(t => t.type === 'expense')
@@ -170,7 +175,7 @@ export default function App() {
   const necessityPct = totalExpenses > 0 ? Math.round((necessityTotal / totalExpenses) * 100) : 0;
   const luxuryPct = totalExpenses > 0 ? Math.round((luxuryTotal / totalExpenses) * 100) : 0;
 
-  const currentTotal = walletBalances.cash + walletBalances.bank;
+  const currentTotal = (Object.values(walletBalances) as number[]).reduce((a: number, b: number) => a + b, 0);
 
   const [isResetConfirming, setIsResetConfirming] = useState(false);
 
@@ -725,7 +730,7 @@ export default function App() {
                     <p className="text-xs text-zinc-500">مخصص للحالات المفاجئة والطارئة</p>
                   </div>
                   <p className="text-4xl font-black text-white tabular-nums">
-                    {extraFunds.emergency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
+                    {walletBalances.emergency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
                   </p>
                 </div>
               </motion.div>
@@ -748,7 +753,7 @@ export default function App() {
                     <p className="text-xs text-zinc-500">مخصص لخططك وأهدافك المستقبلية</p>
                   </div>
                   <p className="text-4xl font-black text-white tabular-nums">
-                    {extraFunds.savings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
+                    {walletBalances.savings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
                   </p>
                 </div>
               </motion.div>
@@ -1867,7 +1872,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
 function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClose: () => void, onAdd: (t: Omit<Transaction, 'id'>) => void, appCurrency: string }) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<TransactionCategory>('food');
+  const [category, setCategory] = useState<TransactionCategory>('salary');
   const [necessity, setNecessity] = useState<NecessityType>('necessity');
   const [type, setType] = useState<TransactionType>('expense');
   const [wallet, setWallet] = useState<WalletType>('bank');
@@ -1879,6 +1884,18 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
   const [convertAmount, setConvertAmount] = useState('');
   const [rates, setRates] = useState<any>({});
   const [showConverter, setShowConverter] = useState(false);
+
+  useEffect(() => {
+    if (type === 'income') {
+      setCategory('salary');
+      // Reset wallet if it was a fund account
+      if (['emergency', 'savings'].includes(wallet)) setWallet('bank');
+    } else if (type === 'expense') {
+      setCategory('food');
+      // Reset wallet if it was a fund account
+      if (['emergency', 'savings'].includes(wallet)) setWallet('bank');
+    }
+  }, [type]);
 
   useEffect(() => {
     api.getExchangeRates().then(setRates);
@@ -2033,23 +2050,33 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
           <div className="space-y-4">
             <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">التصنيف</label>
             <div className="grid grid-cols-4 gap-4">
-              {(Object.keys(CATEGORIES) as TransactionCategory[]).map((catKey) => {
-                const cat = CATEGORIES[catKey];
-                const isSelected = category === catKey;
-                return (
-                  <button
-                    key={catKey}
-                    type="button"
-                    onClick={() => setCategory(catKey)}
-                    className={`flex flex-col items-center gap-3 p-4 rounded-3xl transition-all border border-transparent ${
-                      isSelected ? 'bg-white text-zinc-950 scale-110 shadow-2xl' : 'bg-zinc-900 text-zinc-500 border-white/5 hover:bg-zinc-800'
-                    }`}
-                  >
-                    <cat.icon size={26} strokeWidth={isSelected ? 2.5 : 2} />
-                    <span className="text-[9px] font-black uppercase tracking-tighter">{cat.label}</span>
-                  </button>
-                );
-              })}
+              {(Object.keys(CATEGORIES) as TransactionCategory[])
+                .filter(catKey => {
+                  if (type === 'income') {
+                    return ['salary', 'investment', 'gift', 'other'].includes(catKey);
+                  }
+                  if (type === 'expense') {
+                    return !['salary'].includes(catKey);
+                  }
+                  return true;
+                })
+                .map((catKey) => {
+                  const cat = CATEGORIES[catKey];
+                  const isSelected = category === catKey;
+                  return (
+                    <button
+                      key={catKey}
+                      type="button"
+                      onClick={() => setCategory(catKey)}
+                      className={`flex flex-col items-center gap-3 p-4 rounded-3xl transition-all border border-transparent ${
+                        isSelected ? 'bg-white text-zinc-950 scale-110 shadow-2xl' : 'bg-zinc-900 text-zinc-500 border-white/5 hover:bg-zinc-800'
+                      }`}
+                    >
+                      <cat.icon size={26} strokeWidth={isSelected ? 2.5 : 2} />
+                      <span className="text-[9px] font-black uppercase tracking-tighter">{cat.label}</span>
+                    </button>
+                  );
+                })}
             </div>
           </div>
         )}
@@ -2059,13 +2086,13 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
             <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">
               {type === 'transfer' ? 'من حساب' : 'الحساب'}
             </label>
-            <div className="flex p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5">
-                {(['cash', 'bank'] as WalletType[]).map((w) => (
+            <div className={`p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5 grid ${type === 'transfer' ? 'grid-cols-4 px-1' : 'grid-cols-2'}`}>
+                {(type === 'transfer' ? ['cash', 'bank', 'savings', 'emergency'] : ['cash', 'bank']).map((w) => (
                   <button
                     key={w}
                     type="button"
-                    onClick={() => setWallet(w)}
-                    className={`flex-1 py-4 text-xs font-black rounded-2xl transition-all ${wallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
+                    onClick={() => setWallet(w as WalletType)}
+                    className={`py-4 text-[9px] font-black rounded-2xl transition-all ${wallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
                   >
                     {WALLET_LABELS[w]}
                   </button>
@@ -2076,13 +2103,13 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
           {type === 'transfer' && (
             <div className="flex-1 space-y-4">
               <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">إلى حساب</label>
-              <div className="flex p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5">
-                  {(['cash', 'bank'] as WalletType[]).map((w) => (
+              <div className="p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5 grid grid-cols-4 px-1">
+                  {(['cash', 'bank', 'savings', 'emergency'] as WalletType[]).map((w) => (
                     <button
                       key={w}
                       type="button"
                       onClick={() => setToWallet(w)}
-                      className={`flex-1 py-4 text-xs font-black rounded-2xl transition-all ${toWallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
+                      className={`py-4 text-[9px] font-black rounded-2xl transition-all ${toWallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
                     >
                       {WALLET_LABELS[w]}
                     </button>
@@ -2091,7 +2118,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
             </div>
           )}
 
-          {type !== 'transfer' && (
+          {type === 'expense' && (
             <div className="flex-shrink-0 space-y-4 min-w-[100px]">
                <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">التكرار</label>
                <button
@@ -2105,7 +2132,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
           )}
         </div>
 
-        {type !== 'transfer' && (
+        {type === 'expense' && (
           <div className="space-y-4">
             <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">الأهمية</label>
             <div className="flex p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5">
@@ -2131,7 +2158,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
         <div className="space-y-4">
            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">الوصف</label>
            <input 
-            placeholder={type === 'transfer' ? 'تحويل مبلغ...' : 'اشتريت قهوة، تسوقت من العثيم...'}
+            placeholder={type === 'transfer' ? 'تحويل مبلغ...' : type === 'income' ? 'راتب الشهر، مكافأة، مبيعات...' : 'اشتريت قهوة، تسوقت من العثيم...'}
             className="w-full p-6 bg-zinc-900 rounded-3xl border border-white/5 outline-none focus:ring-4 focus:ring-white/5 text-lg text-white font-bold"
             value={description}
             onChange={(e) => setDescription(e.target.value)}

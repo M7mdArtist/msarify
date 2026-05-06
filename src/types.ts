@@ -4,17 +4,21 @@
  */
 
 export type TransactionCategory = 
+  | 'salary'      // راتب
+  | 'living'      // سكن ومعيشة
+  | 'bills'       // فواتير والتزامات
   | 'food'        // طعام
   | 'transport'   // مواصلات
-  | 'entertainment' // ترفيه
-  | 'shopping'    // تسوق
   | 'health'      // صحة
-  | 'bills'       // فواتير
+  | 'shopping'    // تسوق
+  | 'entertainment' // ترفيه
+  | 'investment'  // استثمار
+  | 'gift'        // هدايا
   | 'other';      // أخرى
 
 export type TransactionType = 'expense' | 'income' | 'transfer';
 
-export type WalletType = 'cash' | 'bank';
+export type WalletType = 'cash' | 'bank' | 'emergency' | 'savings';
 
 export type NecessityType = 'necessity' | 'luxury'; // ضروريات vs كماليات
 
