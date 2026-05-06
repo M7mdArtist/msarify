@@ -196,38 +196,58 @@ async function startServer() {
         Text to parse: "${text}"
       `;
 
-      const aiResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              amount: { type: Type.NUMBER },
-              description: { type: Type.STRING },
-              type: { type: Type.STRING, enum: ['expense', 'income'] },
-              wallet: { type: Type.STRING, enum: ['cash', 'bank'] },
-              category: {
-                type: Type.STRING,
-                enum: [
-                  'food',
-                  'rent',
-                  'utilities',
-                  'transportation',
-                  'health',
-                  'entertainment',
-                  'investment',
-                  'gift',
-                  'other',
-                ],
+      let aiResponse;
+      let retries = 2;
+      while (retries >= 0) {
+        try {
+          aiResponse = await ai.models.generateContent({
+            model: 'gemini-2.0-flash-exp',
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  amount: { type: Type.NUMBER },
+                  description: { type: Type.STRING },
+                  type: { type: Type.STRING, enum: ['expense', 'income'] },
+                  wallet: { type: Type.STRING, enum: ['cash', 'bank'] },
+                  category: {
+                    type: Type.STRING,
+                    enum: [
+                      'food',
+                      'rent',
+                      'utilities',
+                      'transportation',
+                      'health',
+                      'entertainment',
+                      'investment',
+                      'gift',
+                      'other',
+                    ],
+                  },
+                  necessity: { type: Type.STRING, enum: ['necessity', 'luxury'] },
+                },
+                required: ['amount', 'description', 'type', 'wallet', 'category', 'necessity'],
               },
-              necessity: { type: Type.STRING, enum: ['necessity', 'luxury'] },
             },
-            required: ['amount', 'description', 'type', 'wallet', 'category', 'necessity'],
-          },
-        },
-      });
+          });
+          break;
+        } catch (e: any) {
+          const errMsg = e.message || '';
+          if (
+            (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand')) &&
+            retries > 0
+          ) {
+            retries--;
+            await new Promise(r => setTimeout(r, 1000));
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!aiResponse) throw new Error('No response from AI');
 
       const result = JSON.parse(aiResponse.text);
       const id = nodeCrypto.randomUUID();
