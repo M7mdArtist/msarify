@@ -102,6 +102,60 @@ export const api = {
     });
   },
 
+  // Notifications
+  async getNotifications(uid: string): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/notifications/${uid}`);
+    return res.json();
+  },
+
+  async addNotification(n: any): Promise<void> {
+    await fetch(`${API_BASE}/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(n),
+    });
+  },
+
+  async markAllNotificationsRead(uid: string): Promise<void> {
+    await fetch(`${API_BASE}/notifications/read-all/${uid}`, { method: "POST" });
+  },
+
+  async deleteNotification(id: string): Promise<void> {
+    await fetch(`${API_BASE}/notifications/${id}`, { method: "DELETE" });
+  },
+  
+  // Admin
+  async getAdminUsers(): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/admin/users`);
+    return res.json();
+  },
+
+  async broadcastNotification(title: string, message: string): Promise<void> {
+    await fetch(`${API_BASE}/admin/broadcast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, message }),
+    });
+  },
+
+  async resetUserPassword(uid: string, newPassword: string): Promise<void> {
+    await fetch(`${API_BASE}/admin/users/${uid}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword }),
+    });
+  },
+
+  async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/users/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, oldPassword, newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+  },
+
   async getExchangeRates(base: string = 'SAR'): Promise<any> {
     try {
       const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);

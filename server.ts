@@ -31,7 +31,9 @@ db.exec(`
     initialBank REAL DEFAULT 0,
     currency TEXT DEFAULT 'ر.س',
     emergencyFund REAL DEFAULT 0,
-    savingsFund REAL DEFAULT 0
+    savingsFund REAL DEFAULT 0,
+    hasSeenTutorial INTEGER DEFAULT 0,
+    isAdmin INTEGER DEFAULT 0
   );
 `);
 
@@ -49,6 +51,21 @@ try {
 } catch (e) {}
 
 try {
+  db.exec("ALTER TABLE users ADD COLUMN hasSeenTutorial INTEGER DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
+} catch (e) {}
+
+// Bootstrap the user as admin (optional, now handled by script)
+/*
+try {
+  db.prepare("UPDATE users SET isAdmin = 1 WHERE email = ?").run('m.m.a.q.vip@gmail.com');
+} catch (e) {}
+*/
+
+try {
   db.exec("ALTER TABLE users ADD COLUMN password TEXT");
 } catch (e) {
 }
@@ -59,6 +76,10 @@ try {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)");
 } catch (e) {}
 
+try {
+  db.exec("ALTER TABLE transactions ADD COLUMN necessity TEXT DEFAULT 'necessity'");
+} catch (e) {}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
@@ -67,6 +88,7 @@ db.exec(`
     date TEXT,
     category TEXT,
     type TEXT,
+    necessity TEXT,
     wallet TEXT,
     toWallet TEXT,
     userId TEXT,
@@ -94,6 +116,16 @@ db.exec(`
     data TEXT,
     FOREIGN KEY(userId) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    message TEXT,
+    date TEXT,
+    isRead INTEGER DEFAULT 0,
+    userId TEXT,
+    FOREIGN KEY(userId) REFERENCES users(id)
+  );
 `);
 
 async function startServer() {
@@ -117,7 +149,7 @@ async function startServer() {
       `).run(id, displayName, email, hashedPassword);
       
       const token = jwt.sign({ id, email, displayName }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ token, user: { id, email, displayName } });
+      res.json({ token, user: { id, email, displayName, hasSeenTutorial: 0, isAdmin: 0 } });
     } catch (err: any) {
       if (err.message.includes("UNIQUE constraint failed")) {
         return res.status(400).json({ error: "البريد الإلكتروني مسجل مسبقاً" });
@@ -135,7 +167,7 @@ async function startServer() {
       }
       
       const token = jwt.sign({ id: user.id, email: user.email, displayName: user.displayName }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName } });
+      res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName, hasSeenTutorial: !!user.hasSeenTutorial, isAdmin: !!user.isAdmin } });
     } catch (err) {
       res.status(500).json({ error: "خطأ في تسجيل الدخول" });
     }
@@ -182,12 +214,16 @@ async function startServer() {
 
   // User Routes
   app.get("/api/users/:uid", (req, res) => {
-    const user = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund FROM users WHERE id = ?").get(req.params.uid);
+    const user = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, isAdmin FROM users WHERE id = ?").get(req.params.uid);
+    if (user) {
+      user.hasSeenTutorial = !!user.hasSeenTutorial;
+      user.isAdmin = !!user.isAdmin;
+    }
     res.json(user || null);
   });
 
   app.post("/api/users", (req, res) => {
-    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund } = req.body;
+    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial } = req.body;
     db.prepare(`
         UPDATE users SET
           displayName = COALESCE(?, displayName),
@@ -197,9 +233,10 @@ async function startServer() {
           initialBank = COALESCE(?, initialBank),
           currency = COALESCE(?, currency),
           emergencyFund = COALESCE(?, emergencyFund),
-          savingsFund = COALESCE(?, savingsFund)
+          savingsFund = COALESCE(?, savingsFund),
+          hasSeenTutorial = COALESCE(?, hasSeenTutorial)
         WHERE id = ?
-    `).run(displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, id);
+    `).run(displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, id);
     res.json({ status: "ok" });
   });
 
@@ -210,11 +247,11 @@ async function startServer() {
   });
 
   app.post("/api/transactions", (req, res) => {
-    const { id, amount, description, date, category, type, wallet, toWallet, userId } = req.body;
+    const { id, amount, description, date, category, type, necessity, wallet, toWallet, userId } = req.body;
     db.prepare(`
-      INSERT INTO transactions (id, amount, description, date, category, type, wallet, toWallet, userId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, amount, description, date, category, type, wallet, toWallet, userId);
+      INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, toWallet, userId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, amount, description, date, category, type, necessity, wallet, toWallet, userId);
     res.json({ status: "ok" });
   });
 
@@ -266,6 +303,83 @@ async function startServer() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, JSON.stringify(transactions));
     res.json({ status: "ok" });
+  });
+
+  // Notification Routes
+  app.get("/api/notifications/:uid", (req, res) => {
+    const rows = db.prepare("SELECT * FROM notifications WHERE userId = ? ORDER BY date DESC LIMIT 50").all(req.params.uid);
+    res.json(rows.map(r => ({ ...r, isRead: !!r.isRead })));
+  });
+
+  app.post("/api/notifications", (req, res) => {
+    const { id, title, message, date, userId } = req.body;
+    db.prepare(`
+      INSERT INTO notifications (id, title, message, date, userId)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, title, message, date, userId);
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/notifications/read-all/:uid", (req, res) => {
+    db.prepare("UPDATE notifications SET isRead = 1 WHERE userId = ?").run(req.params.uid);
+    res.json({ status: "ok" });
+  });
+
+  app.delete("/api/notifications/:id", (req, res) => {
+    db.prepare("DELETE FROM notifications WHERE id = ?").run(req.params.id);
+    res.json({ status: "ok" });
+  });
+
+  // Admin Routes
+  app.get("/api/admin/users", (req, res) => {
+    // Note: In a real app, you should check for admin status in the JWT or session
+    const users = db.prepare("SELECT id, displayName, email, isAdmin FROM users").all();
+    res.json(users.map(u => ({ ...u, isAdmin: !!u.isAdmin })));
+  });
+
+  app.post("/api/admin/broadcast", (req, res) => {
+    const { title, message } = req.body;
+    const users = db.prepare("SELECT id FROM users").all();
+    
+    const insert = db.prepare(`
+      INSERT INTO notifications (id, title, message, date, userId)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const transaction = db.transaction((users) => {
+      for (const user of users) {
+        insert.run(crypto.randomUUID(), title, message, new Date().toISOString(), user.id);
+      }
+    });
+
+    transaction(users);
+    res.json({ status: "ok", count: users.length });
+  });
+
+  app.post("/api/admin/users/:uid/reset-password", async (req, res) => {
+    const { newPassword } = req.body;
+    try {
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, req.params.uid);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "فشل إعادة تعيين كلمة المرور" });
+    }
+  });
+
+  app.post("/api/users/change-password", async (req, res) => {
+    const { userId, oldPassword, newPassword } = req.body;
+    try {
+      const user: any = db.prepare("SELECT password FROM users WHERE id = ?").get(userId);
+      if (!user || !(await bcrypt.compare(oldPassword, user.password))) {
+        return res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة" });
+      }
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, userId);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "فشل تغيير كلمة المرور" });
+    }
   });
 
   // Vite middleware for development

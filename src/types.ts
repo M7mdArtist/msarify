@@ -24,7 +24,7 @@ export interface Transaction {
   description: string;
   category: TransactionCategory;
   type: TransactionType;
-  necessity: NecessityType;
+  necessity?: NecessityType;
   wallet: WalletType;
   toWallet?: WalletType; // For transfers
   date: string; // ISO string
@@ -60,4 +60,15 @@ export interface UserProfile {
   currency?: string;
   emergencyFund?: number;
   savingsFund?: number;
+  hasSeenTutorial?: boolean;
+  isAdmin?: boolean;
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  date: string;
+  isRead: boolean;
+  userId: string;
 }

@@ -15,11 +15,13 @@ import {
   X,
   LogOut,
   Shield,
+  Users,
   TrendingUp,
   Info,
   User as UserIcon,
   CreditCard,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -34,7 +36,8 @@ import {
   Subscription,
   WalletType,
   TransactionType,
-  Snapshot
+  Snapshot,
+  AppNotification
 } from './types';
 import { 
   Cell, 
@@ -71,11 +74,23 @@ export default function App() {
   const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [viewingSnapshot, setViewingSnapshot] = useState<Snapshot | null>(null);
   const [lastTransactionId, setLastTransactionId] = useState<string | null>(null);
-
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      const parsedUser = JSON.parse(storedUser);
+      setUser(parsedUser);
+      if (parsedUser && !parsedUser.hasSeenTutorial) {
+        setShowTutorial(true);
+      }
     }
     setLoading(false);
   }, []);
@@ -83,11 +98,12 @@ export default function App() {
   const refreshData = async () => {
     if (!user) return;
     try {
-      const [uProfile, txs, subs, snaps] = await Promise.all([
+      const [uProfile, txs, subs, snaps, notices] = await Promise.all([
         api.getUser(user.id),
         api.getTransactions(user.id),
         api.getSubscriptions(user.id),
-        api.getSnapshots(user.id)
+        api.getSnapshots(user.id),
+        api.getNotifications(user.id)
       ]);
 
       if (uProfile) {
@@ -106,6 +122,7 @@ export default function App() {
       setTransactions(txs);
       setSubscriptions(subs);
       setSnapshots(snaps);
+      setNotifications(notices);
     } catch (err) {
       console.error("Error fetching data from SQL:", err);
     }
@@ -148,6 +165,11 @@ export default function App() {
     .filter(t => t.type === 'income')
     .reduce((acc, curr) => acc + curr.amount, 0);
     
+  const necessityTotal = transactions.filter(t => t.type === 'expense' && (!t.necessity || t.necessity === 'necessity')).reduce((a, b) => a + b.amount, 0);
+  const luxuryTotal = transactions.filter(t => t.type === 'expense' && t.necessity === 'luxury').reduce((a, b) => a + b.amount, 0);
+  const necessityPct = totalExpenses > 0 ? Math.round((necessityTotal / totalExpenses) * 100) : 0;
+  const luxuryPct = totalExpenses > 0 ? Math.round((luxuryTotal / totalExpenses) * 100) : 0;
+
   const currentTotal = walletBalances.cash + walletBalances.bank;
 
   const [isResetConfirming, setIsResetConfirming] = useState(false);
@@ -270,6 +292,9 @@ export default function App() {
       localStorage.setItem('token', result.token);
       localStorage.setItem('user', JSON.stringify(result.user));
       setUser(result.user);
+      if (result.user && !result.user.hasSeenTutorial) {
+        setShowTutorial(true);
+      }
     } catch (err: any) {
       setAuthError(err.message || 'حدث خطأ ما');
     } finally {
@@ -384,6 +409,59 @@ export default function App() {
 
   return (
     <div className="min-h-screen pb-24 font-sans bg-zinc-950 text-zinc-100" dir="rtl">
+      {/* Tutorial Overlay */}
+      <AnimatePresence>
+        {showTutorial && (
+          <Tutorial 
+            onComplete={async () => {
+              if (user) {
+                try {
+                  await api.saveUser(user.id, { hasSeenTutorial: true });
+                  
+                  // Send welcome notification
+                  await api.addNotification({
+                    id: crypto.randomUUID(),
+                    title: "أهلاً بك في مصاريفي! 🌟",
+                    message: "يسعدنا انضمامك إلينا. الآن يمكنك البدء بتنظيم ميزانيتك ومتابعة مصروفاتك بكل سهولة.",
+                    date: new Date().toISOString(),
+                    userId: user.id
+                  });
+
+                  const updatedUser = { ...user, hasSeenTutorial: true };
+                  setUser(updatedUser);
+                  localStorage.setItem('user', JSON.stringify(updatedUser));
+                  refreshData();
+                } catch (e) {
+                  console.error(e);
+                }
+              }
+              setShowTutorial(false);
+            }} 
+          />
+        )}
+        {showNotificationsModal && (
+          <NotificationsModal 
+            notifications={notifications}
+            onClose={() => setShowNotificationsModal(false)}
+            onMarkRead={async () => {
+              if (user) {
+                await api.markAllNotificationsRead(user.id);
+                refreshData();
+              }
+            }}
+            onDelete={async (id) => {
+              await api.deleteNotification(id);
+              refreshData();
+            }}
+          />
+        )}
+        {showAdminPanel && (
+          <AdminPanel 
+            onClose={() => setShowAdminPanel(false)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="p-6 flex justify-between items-center bg-zinc-950/50 backdrop-blur-lg border-b border-white/5 safe-top sticky top-0 z-30">
         <div>
@@ -391,9 +469,14 @@ export default function App() {
           <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter">أهلاً بك، {user.displayName?.split(' ')[0]}</p>
         </div>
         <div className="flex gap-3">
-          <button className="p-2.5 bg-zinc-900 rounded-2xl text-zinc-400 relative border border-white/5 shadow-inner">
+          <button 
+            onClick={() => setShowNotificationsModal(true)}
+            className="p-2.5 bg-zinc-900 rounded-2xl text-zinc-400 relative border border-white/5 shadow-inner"
+          >
             <Bell size={18} />
-            <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+            {notifications.filter(n => !n.isRead).length > 0 && (
+              <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+            )}
           </button>
           <button onClick={handleLogout} className="p-2.5 bg-zinc-900 rounded-2xl text-zinc-400 border border-white/5">
             <LogOut size={18} />
@@ -608,20 +691,12 @@ export default function App() {
                <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 shadow-sm">
                   <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-xl flex items-center justify-center mb-4"><ArrowDownLeft size={20} /></div>
                   <p className="text-xs font-bold text-zinc-500 uppercase">الضروريات</p>
-                  <p className="text-2xl font-black text-white mt-1">
-                    {totalExpenses > 0 
-                      ? Math.round((transactions.filter(t => t.necessity === 'necessity' && t.type === 'expense').reduce((a, b) => a + b.amount, 0) / totalExpenses) * 100)
-                      : 0}%
-                  </p>
+                  <p className="text-2xl font-black text-white mt-1">{necessityPct}%</p>
                </div>
                <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 shadow-sm">
                   <div className="w-10 h-10 bg-rose-500/10 text-rose-500 rounded-xl flex items-center justify-center mb-4"><ArrowUpRight size={20} /></div>
                   <p className="text-xs font-bold text-zinc-500 uppercase">الكماليات</p>
-                  <p className="text-2xl font-black text-white mt-1">
-                    {totalExpenses > 0
-                      ? Math.round((transactions.filter(t => t.necessity === 'luxury' && t.type === 'expense').reduce((a, b) => a + b.amount, 0) / totalExpenses) * 100)
-                      : 0}%
-                  </p>
+                  <p className="text-2xl font-black text-white mt-1">{luxuryPct}%</p>
                </div>
             </div>
           </div>
@@ -685,6 +760,23 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 pb-20">
             <h2 className="text-2xl font-bold px-1 text-white">الإعدادات</h2>
             
+            {user?.isAdmin && (
+              <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-[2.5rem] space-y-4">
+                <div className="p-4 space-y-2">
+                  <h3 className="text-lg font-black text-emerald-500">لوحة الإدارة</h3>
+                  <p className="text-xs text-zinc-500 leading-relaxed text-emerald-500/70">لديك صلاحيات المشرف. يمكنك إدارة المستخدمين وإرسال تنبيهات عامة من هنا.</p>
+                </div>
+                
+                <button 
+                  onClick={() => setShowAdminPanel(true)}
+                  className="w-full bg-emerald-500 text-white py-6 rounded-[2rem] font-black text-lg flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl shadow-emerald-500/20"
+                >
+                  <Shield size={24} />
+                  فتح لوحة الإدارة
+                </button>
+              </div>
+            )}
+
             <div className="bg-zinc-900 rounded-[2.5rem] p-4 border border-white/5 space-y-4">
               <div className="p-6 space-y-2">
                 <h3 className="text-lg font-black text-white">إدارة أرصدتك وعملتك</h3>
@@ -698,6 +790,62 @@ export default function App() {
                 <CreditCard size={24} />
                 تعديل الأرصدة والعملة
               </button>
+            </div>
+
+            {/* Password Change Section */}
+            <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-zinc-800 rounded-2xl text-zinc-400">
+                  <Lock size={24} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white">تغيير كلمة المرور</h3>
+                  <p className="text-xs text-zinc-500">قم بتحديث كلمة مرور حسابك بانتظام</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">كلمة المرور الحالية</label>
+                  <input 
+                    type="password"
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-mono"
+                    placeholder="••••••••"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">كلمة المرور الجديدة</label>
+                  <input 
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-mono"
+                    placeholder="••••••••"
+                  />
+                </div>
+                <button 
+                  onClick={async () => {
+                    if (!oldPassword || !newPassword) return;
+                    setChangingPassword(true);
+                    try {
+                      await api.changePassword(user!.id, oldPassword, newPassword);
+                      setOldPassword('');
+                      setNewPassword('');
+                      alert('تم تغيير كلمة المرور بنجاح');
+                    } catch (err: any) {
+                      alert(err.message || 'فشلت العملية');
+                    } finally {
+                      setChangingPassword(false);
+                    }
+                  }}
+                  disabled={changingPassword || !oldPassword || !newPassword}
+                  className="w-full bg-zinc-800 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg disabled:opacity-50"
+                >
+                  {changingPassword ? 'جاري التغيير...' : 'تحديث كلمة المرور'}
+                </button>
+              </div>
             </div>
 
             <div className="bg-rose-500/5 border border-rose-500/10 p-6 rounded-[2rem] space-y-4">
@@ -872,6 +1020,7 @@ export default function App() {
             extraFunds={extraFunds}
             onUpdateCurrency={handleUpdateCurrency}
             onClose={() => setShowMasterBalanceModal(false)}
+            onOpenAdmin={() => setShowAdminPanel(true)}
             onRefresh={refreshData}
           />
         )}
@@ -887,7 +1036,8 @@ function MasterBalanceModal({
   extraFunds, 
   onUpdateCurrency, 
   onClose,
-  onRefresh
+  onRefresh,
+  onOpenAdmin
 }: { 
   user: any, 
   appCurrency: string,
@@ -895,12 +1045,13 @@ function MasterBalanceModal({
   extraFunds: { emergency: number, savings: number },
   onUpdateCurrency: (c: string) => Promise<void>,
   onClose: () => void,
-  onRefresh: () => void
+  onRefresh: () => void,
+  onOpenAdmin: () => void
 }) {
-  const [cash, setCash] = useState(initialBalances.cash.toString());
-  const [bank, setBank] = useState(initialBalances.bank.toString());
-  const [emergency, setEmergency] = useState(extraFunds.emergency.toString());
-  const [savings, setSavings] = useState(extraFunds.savings.toString());
+  const [cash, setCash] = useState((initialBalances?.cash || 0).toString());
+  const [bank, setBank] = useState((initialBalances?.bank || 0).toString());
+  const [emergency, setEmergency] = useState((extraFunds?.emergency || 0).toString());
+  const [savings, setSavings] = useState((extraFunds?.savings || 0).toString());
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
@@ -1043,6 +1194,19 @@ function MasterBalanceModal({
         >
           {loading ? 'جاري الحفظ...' : 'حفظ جميع التغييرات'}
         </button>
+
+        {user?.isAdmin && (
+          <button 
+            onClick={() => {
+              onClose();
+              onOpenAdmin();
+            }}
+            className="w-full mt-4 flex items-center justify-center gap-3 p-5 bg-emerald-500/10 rounded-[2rem] border border-emerald-500/20 text-emerald-500 shadow-lg shadow-emerald-500/5 active:scale-95 transition-all"
+          >
+            <Shield size={20} />
+            <span className="font-black text-sm">فتح لوحة الإدارة</span>
+          </button>
+        )}
       </div>
     </motion.div>
   );
@@ -1377,6 +1541,325 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
           )}
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+function Tutorial({ onComplete }: { onComplete: () => void }) {
+  const [step, setStep] = useState(0);
+  
+  const steps = [
+    {
+      title: "أهلاً بك في مصاريفي! 🚀",
+      description: "هذا التطبيق مصمم لمساعدتك على تنظيم ميزانيتك بكل بساطة واحترافية. خلنا ناخذ جولة سريعة.",
+      icon: <LayoutDashboard size={40} className="text-white" />
+    },
+    {
+      title: "ميزانيتك الإجمالية 💰",
+      description: "هنا تقدر تشوف إجمالي مبالغك في الكاش والبنك، وتطالع دخلك ومصروفك الشهري بوضوح.",
+      icon: <PieChart size={40} className="text-amber-500" />
+    },
+    {
+      title: "الاشتراكات الشهرية 💳",
+      description: "تقدر تضيف اشتراكاتك (نتفليكس، نادي، غيره) والتطبيق راح يذكرك بموعد التجديد ويخصمها تلقائياً.",
+      icon: <CreditCard size={40} className="text-blue-500" />
+    },
+    {
+      title: "إضافة عملية جديدة ➕",
+      description: "الزر اللي في النص هو قلب التطبيق. أي ريال تصرفه أو يجيك، سجله هنا فوراً عشان ما تنساه.",
+      icon: <Plus size={40} className="text-emerald-500" />
+    },
+    {
+      title: "تراجع عن الخطأ 🔄",
+      description: "غلطت في تسجيل عملية؟ لا تشيل هم، زر 'تراجع' يطلع لك فوراً بعد كل عملية عشان تمسحها بضغطة وحدة.",
+      icon: <ArrowRightLeft size={40} className="text-rose-500" />
+    },
+    {
+      title: "العملات والصناديق 🌍",
+      description: "من الإعدادات تقدر تغير العملة لـ (ريال، درهم، دينار...) وتوزع فلوسك في صناديق ادخار أو طوارئ.",
+      icon: <Settings size={40} className="text-zinc-400" />
+    }
+  ];
+
+  const handleNext = () => {
+    if (step < steps.length - 1) {
+      setStep(step + 1);
+    } else {
+      onComplete();
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+    >
+      <motion.div 
+        key={step}
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="w-full max-w-sm bg-zinc-900 border border-white/10 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-center space-y-6"
+      >
+        <div className="flex justify-center mb-2">
+          <motion.div 
+            initial={{ rotate: -10, scale: 0.8 }}
+            animate={{ rotate: 0, scale: 1 }}
+            className="p-6 bg-zinc-800 rounded-[2rem] border border-white/5"
+          >
+            {steps[step].icon}
+          </motion.div>
+        </div>
+
+        <div className="space-y-3">
+          <h2 className="text-2xl font-black text-white">{steps[step].title}</h2>
+          <p className="text-zinc-400 leading-relaxed font-bold text-sm">
+            {steps[step].description}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 pt-4">
+          <div className="flex gap-1.5">
+            {steps.map((_, i) => (
+              <div 
+                key={i} 
+                className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-white' : 'w-1.5 bg-zinc-800'}`}
+              />
+            ))}
+          </div>
+          <button 
+            onClick={handleNext}
+            className="px-8 py-4 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-lg"
+          >
+            {step === steps.length - 1 ? 'ابدأ الاستخدام' : 'التالي'}
+          </button>
+        </div>
+
+        <button 
+          onClick={onComplete}
+          className="absolute top-6 right-6 text-zinc-600 hover:text-zinc-400 p-1"
+        >
+          <X size={20} />
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function NotificationsModal({ 
+  notifications, 
+  onClose, 
+  onMarkRead, 
+  onDelete 
+}: { 
+  notifications: AppNotification[], 
+  onClose: () => void, 
+  onMarkRead: () => void,
+  onDelete: (id: string) => void
+}) {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[80vh]"
+      >
+        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
+          <h2 className="text-xl font-black text-white">التنبيهات</h2>
+          <div className="flex gap-2">
+            <button 
+              onClick={onMarkRead}
+              className="text-[10px] font-black text-zinc-500 hover:text-zinc-300"
+            >
+              قراءة الكل
+            </button>
+            <button onClick={onClose} className="p-1 text-zinc-600 hover:text-zinc-400">
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+          {notifications.length > 0 ? notifications.map((n) => (
+            <motion.div 
+              key={n.id}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={`p-5 rounded-[2rem] border relative transition-all group ${n.isRead ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-800 border-white/10 shadow-lg'}`}
+            >
+              {!n.isRead && (
+                <span className="absolute top-5 left-5 w-2 h-2 bg-emerald-500 rounded-full"></span>
+              )}
+              <div className="space-y-1">
+                <h3 className="font-bold text-white text-sm pr-4">{n.title}</h3>
+                <p className="text-zinc-400 text-xs leading-relaxed">{n.message}</p>
+                <p className="text-[10px] text-zinc-600 pt-1">
+                  {new Date(n.date).toLocaleDateString('ar-SA', { day: 'numeric', month: 'long', hour: 'numeric', minute: 'numeric' })}
+                </p>
+              </div>
+              <button 
+                onClick={() => onDelete(n.id)}
+                className="absolute bottom-5 left-5 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-rose-500/50 hover:text-rose-500"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          )) : (
+            <div className="py-20 text-center space-y-4">
+              <div className="w-16 h-16 bg-zinc-950 rounded-full flex items-center justify-center mx-auto text-zinc-800">
+                <Bell size={24} />
+              </div>
+              <p className="text-zinc-500 text-xs font-bold">لا توجد تنبيهات جديدة</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function AdminPanel({ onClose }: { onClose: () => void }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getAdminUsers();
+      setUsers(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBroadcast = async () => {
+    if (!broadcastTitle || !broadcastMessage) return;
+    setSending(true);
+    try {
+      await api.broadcastNotification(broadcastTitle, broadcastMessage);
+      setBroadcastTitle('');
+      setBroadcastMessage('');
+      alert('تم إرسال التنبيه لجميع المستخدمين بنجاح!');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
+          <div>
+            <h2 className="text-xl font-black text-white">لوحة الإدارة</h2>
+            <p className="text-[10px] text-zinc-500 font-bold">إدارة المستخدمين وتبليغ الجميع</p>
+          </div>
+          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
+          {/* Broadcast Section */}
+          <div className="space-y-6">
+            <h3 className="text-sm font-black text-white flex items-center gap-2">
+              <Bell size={18} className="text-emerald-500" />
+              إرسال تنبيه عام لكل المشتركين
+            </h3>
+            <div className="space-y-4">
+              <input 
+                type="text"
+                placeholder="عنوان التنبيه"
+                value={broadcastTitle}
+                onChange={(e) => setBroadcastTitle(e.target.value)}
+                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-sm outline-none focus:border-emerald-500/50 transition-all"
+              />
+              <textarea 
+                placeholder="نص التنبيه..."
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-sm outline-none focus:border-emerald-500/50 transition-all min-h-[100px]"
+              />
+              <button 
+                onClick={handleBroadcast}
+                disabled={sending || !broadcastTitle || !broadcastMessage}
+                className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+              >
+                {sending ? 'جاري الإرسال...' : 'إرسال للجميع الآن'}
+              </button>
+            </div>
+          </div>
+
+          {/* User List Section */}
+          <div className="space-y-6">
+            <h3 className="text-sm font-black text-white flex items-center gap-2">
+              <Users size={18} className="text-blue-500" />
+              قائمة المستخدمين ({users.length})
+            </h3>
+            <div className="space-y-2">
+              {loading ? (
+                <p className="text-xs text-zinc-500 text-center py-10">جاري تحميل المستخدمين...</p>
+              ) : users.map(u => (
+                  <div key={u.id} className="p-4 bg-zinc-950/50 rounded-2xl border border-white/5 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-bold text-white">{u.displayName}</p>
+                        <p className="text-[10px] text-zinc-500">{u.email}</p>
+                      </div>
+                      {u.isAdmin && (
+                        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-black rounded-full border border-emerald-500/20">
+                          مدير
+                        </span>
+                      )}
+                    </div>
+                    
+                    <button 
+                      onClick={async () => {
+                        const pass = prompt('أدخل كلمة المرور الجديدة لهذا المستخدم:');
+                        if (pass) {
+                          try {
+                            await api.resetUserPassword(u.id, pass);
+                            alert('تم تحديث كلمة المرور بنجاح!');
+                          } catch (err) {
+                            alert('فشلت العملية');
+                          }
+                        }
+                      }}
+                      className="w-full py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-zinc-400 hover:text-white transition-all uppercase tracking-widest"
+                    >
+                      إعادة تعيين كلمة المرور
+                    </button>
+                  </div>
+                ))}
+              </div>
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
