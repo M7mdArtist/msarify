@@ -3,18 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type TransactionCategory = 
-  | 'salary'      // راتب
-  | 'living'      // سكن ومعيشة
-  | 'bills'       // فواتير والتزامات
-  | 'food'        // طعام
-  | 'transport'   // مواصلات
-  | 'health'      // صحة
-  | 'shopping'    // تسوق
+export type TransactionCategory =
+  | 'salary' // راتب
+  | 'living' // سكن ومعيشة
+  | 'bills' // فواتير والتزامات
+  | 'food' // طعام
+  | 'transport' // مواصلات
+  | 'health' // صحة
+  | 'shopping' // تسوق
   | 'entertainment' // ترفيه
-  | 'investment'  // استثمار
-  | 'gift'        // هدايا
-  | 'other';      // أخرى
+  | 'investment' // استثمار
+  | 'gift' // هدايا
+  | 'other' // أخرى
+  | 'transfer'; // تحويل
 
 export type TransactionType = 'expense' | 'income' | 'transfer';
 

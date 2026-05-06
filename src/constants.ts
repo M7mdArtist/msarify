@@ -4,19 +4,20 @@
  */
 
 import { TransactionCategory, NecessityType } from './types';
-import { 
-  Utensils, 
-  Car, 
-  Gamepad2, 
-  ShoppingBag, 
-  Stethoscope, 
-  Receipt, 
+import {
+  Utensils,
+  Car,
+  Gamepad2,
+  ShoppingBag,
+  Stethoscope,
+  Receipt,
   MoreHorizontal,
   Coins,
   Home,
   TrendingUp,
   Gift,
-  GraduationCap
+  GraduationCap,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 export const CURRENCY = 'SAR'; // Default to Saudi Riyal, can be dynamic later
@@ -33,6 +34,7 @@ export const CATEGORIES: Record<TransactionCategory, { label: string; icon: any;
   investment: { label: 'استثمار', icon: TrendingUp, color: 'bg-teal-100 text-teal-600' },
   gift: { label: 'هدايا', icon: Gift, color: 'bg-red-100 text-red-600' },
   other: { label: 'أخرى', icon: MoreHorizontal, color: 'bg-gray-100 text-gray-600' },
+  transfer: { label: 'تحويل', icon: ArrowRightLeft, color: 'bg-amber-100 text-amber-600' },
 };
 
 export const NECESSITY_LABELS: Record<NecessityType, string> = {
@@ -48,6 +50,16 @@ export const WALLET_LABELS: Record<string, string> = {
 };
 
 export const ARABIC_MONTHS = [
-  'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+  'يناير',
+  'فبراير',
+  'مارس',
+  'أبريل',
+  'مايو',
+  'يونيو',
+  'يوليو',
+  'أغسطس',
+  'سبتمبر',
+  'أكتوبر',
+  'نوفمبر',
+  'ديسمبر',
 ];
