@@ -175,7 +175,7 @@ export default function App() {
   const necessityPct = totalExpenses > 0 ? Math.round((necessityTotal / totalExpenses) * 100) : 0;
   const luxuryPct = totalExpenses > 0 ? Math.round((luxuryTotal / totalExpenses) * 100) : 0;
 
-  const currentTotal = (Object.values(walletBalances) as number[]).reduce((a: number, b: number) => a + b, 0);
+  const currentTotal = walletBalances.cash + walletBalances.bank;
 
   const [isResetConfirming, setIsResetConfirming] = useState(false);
 
