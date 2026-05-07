@@ -1,20 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "IBM Plex Sans Arabic", sans-serif;
 }
 
 @layer base {
   body {
-    @apply bg-zinc-950 text-zinc-100 antialiased;
+    @apply bg-zinc-950 text-zinc-100 antialiased selection:bg-white selection:text-black;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
     -webkit-tap-highlight-color: transparent;
+    -webkit-overflow-scrolling: touch;
   }
 
-  /* Prevent selection on buttons for better mobile feel */
   button {
-    @apply select-none active:scale-95 transition-transform cursor-pointer;
+    @apply select-none active:scale-95 transition-all cursor-pointer;
+  }
+
+  input, select, textarea {
+    @apply outline-none focus:ring-0 appearance-none;
   }
 }
 
@@ -27,12 +32,42 @@
     padding-top: env(safe-area-inset-top);
   }
 
-  .glass-card {
-    @apply bg-zinc-900/50 backdrop-blur-xl border border-white/10;
+  .glass {
+    @apply bg-zinc-900/60 backdrop-blur-3xl border border-white/10;
   }
 
-  .nav-blur {
-    @apply bg-zinc-950/80 backdrop-blur-2xl border-t border-white/5;
+  .premium-gradient {
+    @apply bg-gradient-to-tr from-zinc-900 to-zinc-800 border border-white/10 shadow-2xl;
   }
+  
+  .tab-item {
+    @apply flex flex-col items-center justify-center gap-1 transition-all;
+  }
+  
+  .tab-item-active {
+    @apply text-white;
+  }
+  
+  .tab-item-inactive {
+    @apply text-zinc-500 hover:text-zinc-400;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@keyframes slow-pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+  100% { opacity: 0.4; }
+}
+
+.animate-slow-pulse {
+  animation: slow-pulse 3s ease-in-out infinite;
 }
 

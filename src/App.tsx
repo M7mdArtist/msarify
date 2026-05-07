@@ -12,6 +12,8 @@ import {
   ArrowUpRight, 
   ArrowDownLeft,
   Bell,
+  BellOff,
+  BellRing,
   X,
   LogOut,
   Shield,
@@ -23,9 +25,21 @@ import {
   ArrowRightLeft,
   Lock,
   Smartphone,
-  ChevronRight
+  ChevronRight,
+  ChevronDown,
+  Trash2,
+  Camera,
+  Loader2,
+  Wallet
 } from 'lucide-react';
+import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
+
+const convertArabicNumerals = (str: string) => {
+  return str
+    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+    .replace(/[٫،,]/g, ".");
+};
 import { 
   CATEGORIES, 
   NECESSITY_LABELS,
@@ -42,11 +56,24 @@ import {
   AppNotification
 } from './types';
 import { 
+  subMonths, 
+  format
+} from 'date-fns';
+import { ar } from 'date-fns/locale';
+import { 
   Cell, 
   Pie, 
   PieChart as RechartsPieChart, 
   ResponsiveContainer,
-  Tooltip
+  Tooltip,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Legend,
+  AreaChart,
+  Area
 } from 'recharts';
 import { api } from './services/api';
 
@@ -85,6 +112,21 @@ export default function App() {
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [exchangeRates, setExchangeRates] = useState<any>({});
+  
+  useEffect(() => {
+    const fetchRates = async () => {
+      try {
+        const rates = await api.getExchangeRates();
+        setExchangeRates(rates);
+      } catch (e) {
+        console.error("Rates fetch failed:", e);
+      }
+    };
+    fetchRates();
+    const interval = setInterval(fetchRates, 1000 * 60 * 60); // Refresh every hour
+    return () => clearInterval(interval);
+  }, []);
   
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -179,6 +221,30 @@ export default function App() {
   const luxuryPct = totalExpenses > 0 ? Math.round((luxuryTotal / totalExpenses) * 100) : 0;
 
   const currentTotal = walletBalances.cash + walletBalances.bank;
+
+  const trendData = React.useMemo(() => {
+    const last6Months = Array.from({ length: 6 }).map((_, i) => {
+      const date = subMonths(new Date(), i);
+      return {
+        month: format(date, 'MMM', { locale: ar }),
+        monthKey: format(date, 'yyyy-MM'),
+        income: 0,
+        expense: 0
+      };
+    }).reverse();
+
+    transactions.forEach(t => {
+      const tDate = new Date(t.date);
+      const key = format(tDate, 'yyyy-MM');
+      const dataPoint = last6Months.find(m => m.monthKey === key);
+      if (dataPoint) {
+        if (t.type === 'income') dataPoint.income += t.amount;
+        else if (t.type === 'expense') dataPoint.expense += t.amount;
+      }
+    });
+
+    return last6Months;
+  }, [transactions]);
 
   const [isResetConfirming, setIsResetConfirming] = useState(false);
 
@@ -415,6 +481,207 @@ export default function App() {
     );
   }
 
+  // Dashboard Tab Component
+  const DashboardTab = () => (
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Premium Balance Card */}
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative p-8 rounded-[3rem] overflow-hidden group shadow-2xl bg-zinc-900 border border-white/5 active:scale-[0.99] transition-transform duration-500"
+      >
+        {/* Animated Background Elements */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full -mr-64 -mt-64 animate-pulse"></div>
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/5 blur-[100px] rounded-full -ml-48 -mb-48 group-hover:bg-emerald-500/10 transition-all duration-700"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02),transparent)] opacity-50"></div>
+        
+        <div className="relative z-10">
+          <div className="flex justify-between items-start mb-10">
+            <div className="space-y-1 text-right w-full">
+              <div className="flex items-center justify-end gap-2 mb-1">
+                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">إجمالي الرصيد</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+              </div>
+              <h2 className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter text-white drop-shadow-2xl">
+                {currentTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                <span className="text-sm font-medium text-zinc-600 mr-2">{appCurrency}</span>
+              </h2>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4 mb-8">
+            <motion.div 
+              whileHover={{ y: -4 }}
+              className="bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-white/5 space-y-4 hover:bg-white/[0.05] transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <div className="p-2.5 bg-zinc-800 rounded-2xl text-zinc-400">
+                  <Wallet size={16} />
+                </div>
+                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">الكاش</span>
+              </div>
+              <p className="text-xl font-black tabular-nums text-white truncate">
+                {walletBalances.cash.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                <span className="text-[10px] font-bold text-zinc-600 mr-1.5">{appCurrency}</span>
+              </p>
+            </motion.div>
+
+            <motion.div 
+              whileHover={{ y: -4 }}
+              className="bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-white/5 space-y-4 hover:bg-white/[0.05] transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <div className="p-2.5 bg-zinc-800 rounded-2xl text-zinc-400">
+                  <Smartphone size={16} />
+                </div>
+                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">الصرافة</span>
+              </div>
+              <p className="text-xl font-black tabular-nums text-white truncate">
+                {walletBalances.bank.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                <span className="text-[10px] font-bold text-zinc-600 mr-1.5">{appCurrency}</span>
+              </p>
+            </motion.div>
+          </div>
+
+          <div className="pt-8 border-t border-white/5 flex gap-12 justify-center">
+            <div className="group cursor-help">
+              <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                <div className="w-6 h-6 rounded-xl bg-emerald-400/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowDownLeft size={12} /></div>
+                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">دخل</span>
+              </div>
+              <p className="text-lg font-black text-white">{totalIncome.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} <span className="text-[10px] text-zinc-600 font-bold">{appCurrency}</span></p>
+            </div>
+            
+            <div className="w-px h-10 bg-white/5 self-center"></div>
+
+            <div className="group cursor-help">
+              <div className="flex items-center gap-2 text-rose-400 mb-1">
+                <div className="w-6 h-6 rounded-xl bg-rose-400/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowUpRight size={12} /></div>
+                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">صرف</span>
+              </div>
+              <p className="text-lg font-black text-white">{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} <span className="text-[10px] text-zinc-600 font-bold">{appCurrency}</span></p>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Threshold Warning */}
+      {userBudget > 0 && totalExpenses > userBudget && (
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="bg-rose-500/10 border border-rose-500/20 p-5 rounded-3xl flex items-center gap-4 group"
+        >
+          <div className="w-12 h-12 bg-rose-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-rose-500/30 group-hover:scale-110 transition-transform">
+            <Bell size={20} />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-black text-rose-200 uppercase tracking-tight">تعديت الميزانية!</p>
+            <p className="text-xs text-rose-500/70 font-bold">صرفت أكثر من {userBudget.toLocaleString()} {appCurrency}</p>
+          </div>
+          <ChevronRight size={16} className="text-rose-500/30" />
+        </motion.div>
+      )}
+
+      {/* Subscription Sliders */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center group cursor-pointer px-1">
+          <div className="flex items-center gap-2">
+            <CreditCard size={18} className="text-indigo-400" />
+            <h2 className="font-black text-zinc-100 uppercase tracking-tighter">الاشتراكات</h2>
+          </div>
+          <button onClick={() => setShowSubscriptionModal({ show: true })} className="text-[10px] font-black text-zinc-500 bg-zinc-900 border border-white/5 py-1 px-3 rounded-full hover:border-white/20 transition-all uppercase tracking-widest">إدارة</button>
+        </div>
+        <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide px-1 -mx-1 snap-x">
+          {subscriptions.length > 0 ? subscriptions.map((s) => (
+            <motion.div 
+              key={s.id}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowSubscriptionModal({ show: true, sub: s })}
+              className="min-w-[160px] snap-center glass p-5 rounded-[2rem] space-y-4 cursor-pointer hover:border-white/20 transition-all"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center text-zinc-100 font-bold text-lg shadow-inner">{s.name[0]}</div>
+              <div>
+                <p className="text-sm font-black">{s.name}</p>
+                <p className="text-[10px] text-zinc-500 font-bold">كل شهر</p>
+              </div>
+              <div className="pt-2 flex justify-between items-end">
+                <span className="text-sm font-black">{s.amount.toFixed(0)} <span className="text-[9px] opacity-40 font-bold uppercase">{appCurrency}</span></span>
+                <span className="text-[9px] font-black text-indigo-400 bg-indigo-400/10 px-2 py-0.5 rounded-md">يوم {new Date(s.nextBillingDate).getDate()}</span>
+              </div>
+            </motion.div>
+          )) : (
+            <div className="w-full glass p-8 rounded-[2rem] text-center space-y-3">
+              <div className="w-12 h-12 bg-zinc-950 rounded-2xl flex items-center justify-center mx-auto text-zinc-800 shadow-inner"><CreditCard size={20} /></div>
+              <p className="text-xs text-zinc-500 font-bold">لا توجد اشتراكات مجدولة</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recent History */}
+      <div className="space-y-6 pb-12">
+        <div className="flex justify-between items-center group px-1">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-zinc-900 rounded-lg text-zinc-500 border border-white/5">
+              <ArrowRightLeft size={14} />
+            </div>
+            <h2 className="font-black text-white uppercase tracking-tighter text-lg">العمليات الأخيرة</h2>
+          </div>
+          <button 
+            onClick={() => setShowAllTransactions(true)} 
+            className="text-[9px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-900/50 px-3 py-1.5 rounded-full border border-white/5 hover:border-white/10 active:bg-zinc-800 transition-all"
+          >
+            عرض الكل
+          </button>
+        </div>
+        <div className="space-y-4">
+          {transactions.length > 0 ? transactions.slice(0, 5).map((t, i) => {
+            const category = CATEGORIES[t.category];
+            const isExpense = t.type === 'expense';
+            return (
+              <motion.div 
+                layout
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
+                key={t.id}
+                className="bg-white/[0.02] backdrop-blur-3xl p-4 rounded-[2rem] flex items-center gap-4 hover:bg-white/[0.04] transition-all border border-white/5 group"
+              >
+                <div className={`w-14 h-14 rounded-[1.25rem] ${category.color} flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300 relative overflow-hidden`}>
+                   <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                   <category.icon size={24} className="text-white relative z-10" />
+                </div>
+                <div className="flex-1 min-w-0 text-right">
+                  <p className="font-black text-sm text-white truncate mb-0.5 tracking-tight">{t.description}</p>
+                  <div className="flex items-center justify-end gap-2 text-zinc-500">
+                    <span className="text-[9px] font-bold uppercase tracking-wider">{WALLET_LABELS[t.wallet]}</span>
+                    <div className="w-1 h-1 rounded-full bg-zinc-800"></div>
+                    <span className="text-[9px] font-bold uppercase tracking-wider">{new Date(t.date).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                </div>
+                <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-white' : 'text-emerald-400'} pr-1`}>
+                  <span className="text-xs opacity-50 ml-1">{isExpense ? '-' : '+'}</span>
+                  {t.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                </div>
+              </motion.div>
+            );
+          }) : (
+            <div className="text-center py-16 bg-white/[0.02] rounded-[3rem] border border-dashed border-white/5 space-y-4">
+              <div className="w-20 h-20 bg-zinc-950 rounded-[2.5rem] flex items-center justify-center mx-auto text-zinc-900 shadow-inner group">
+                <LayoutDashboard size={40} className="group-hover:scale-110 transition-transform" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-black text-zinc-500 uppercase tracking-tight">لا توجد عمليات مسجلة</p>
+                <p className="text-[10px] text-zinc-700 font-bold uppercase tracking-widest">سجل أول عملية لك الآن</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen pb-24 font-sans bg-zinc-950 text-zinc-100" dir="rtl">
       {/* Tutorial Overlay */}
@@ -470,193 +737,39 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Header */}
-      <header className="p-6 flex justify-between items-center bg-zinc-950/50 backdrop-blur-lg border-b border-white/5 safe-top sticky top-0 z-30">
-        <div>
-          <h1 className="text-xl font-black text-white tracking-widest uppercase text-right">مصاريفي</h1>
-          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter">أهلاً بك، {user.displayName?.split(' ')[0]}</p>
+      <header className="px-6 py-10 flex justify-between items-center sticky top-0 z-40 bg-zinc-950/60 backdrop-blur-3xl border-b border-white/5 safe-top">
+        <div className="space-y-0.5">
+          <h1 className="text-3xl font-black text-white tracking-tighter uppercase leading-tight italic">مصاريفي</h1>
+          <div className="flex items-center gap-2 pr-1">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em]">{user.displayName}</p>
+          </div>
         </div>
         <div className="flex gap-3">
-          <button 
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => setShowNotificationsModal(true)}
-            className="p-2.5 bg-zinc-900 rounded-2xl text-zinc-400 relative border border-white/5 shadow-inner"
+            className="p-3 bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-400 relative border border-white/10 transition-all hover:bg-white/[0.07] hover:text-white"
           >
-            <Bell size={18} />
+            <Bell size={20} />
             {notifications.filter(n => !n.isRead).length > 0 && (
-              <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-zinc-950"></span>
             )}
-          </button>
-          <button onClick={handleLogout} className="p-2.5 bg-zinc-900 rounded-2xl text-zinc-400 border border-white/5">
-            <LogOut size={18} />
-          </button>
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleLogout}
+            className="p-3 bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-400 border border-white/10 transition-all hover:bg-white/[0.07] hover:text-rose-400"
+          >
+            <LogOut size={20} />
+          </motion.button>
         </div>
       </header>
 
-      <main className="p-4 space-y-6 max-w-lg mx-auto">
-        {activeTab === 'home' && (
-          <>
-            {/* Balance Card */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-zinc-900 border border-white/10 text-white p-8 rounded-[2.5rem] shadow-2xl space-y-6 relative overflow-hidden"
-            >
-              <div className="absolute -top-10 -right-10 w-40 h-40 bg-zinc-800 rounded-full blur-3xl opacity-50"></div>
-              <div className="space-y-1 relative z-10 text-center sm:text-right">
-                <span className="text-xs font-medium opacity-50 uppercase tracking-widest">إجمالي الميزانية</span>
-                <div className="text-5xl font-black tabular-nums">
-                  {currentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xl font-medium text-zinc-500">{appCurrency}</span>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4 relative z-10">
-                <div className="bg-zinc-950/40 p-5 rounded-3xl border border-white/5 space-y-1 group hover:border-white/20 transition-all">
-                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الكاش</span>
-                  <p className="text-2xl font-black tabular-nums text-white">{walletBalances.cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                </div>
-                <div className="bg-zinc-950/40 p-5 rounded-3xl border border-white/5 space-y-1 group hover:border-white/20 transition-all">
-                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الصرافة</span>
-                  <p className="text-2xl font-black tabular-nums text-white">{walletBalances.bank.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                </div>
-              </div>
-
-              <div className="flex gap-6 pt-6 border-t border-white/5 relative z-10">
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center gap-1.5 text-emerald-400">
-                    <div className="p-1 bg-emerald-400/10 rounded-lg"><ArrowDownLeft size={12} /></div>
-                    <span className="text-[10px] font-bold uppercase">الدخل</span>
-                  </div>
-                  <div className="text-xl font-black tabular-nums text-emerald-50">{totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                </div>
-                <div className="flex-1 space-y-1 border-r border-white/5 pr-6">
-                  <div className="flex items-center gap-1.5 text-rose-400">
-                    <div className="p-1 bg-rose-400/10 rounded-lg"><ArrowUpRight size={12} /></div>
-                    <span className="text-[10px] font-bold uppercase">المصروف</span>
-                  </div>
-                  <div className="text-xl font-black tabular-nums text-rose-50">{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Threshold Warning */}
-            {userBudget > 0 && totalExpenses > userBudget && (
-              <motion.div 
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="bg-rose-950/20 border border-rose-500/10 p-5 rounded-3xl flex items-center gap-4"
-              >
-                <div className="bg-rose-500 text-white p-3 rounded-2xl shadow-lg shadow-rose-900/50">
-                  <Bell size={20} />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-rose-100">تحذير الميزانية!</p>
-                  <p className="text-xs text-rose-400 leading-relaxed">لقد تجاوزت سقف الصرف المحدد ({userBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).</p>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Subscriptions Section */}
-            <div className="space-y-4">
-              <div className="flex justify-between items-center px-1">
-                <h2 className="font-bold text-zinc-100">الاشتراكات الشهرية</h2>
-                <button 
-                  onClick={() => setShowSubscriptionModal({ show: true })}
-                  className="text-xs font-bold text-zinc-500 hover:text-zinc-300"
-                >
-                  إدارة
-                </button>
-              </div>
-              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide px-1 -mx-1">
-                {subscriptions.length > 0 ? subscriptions.map((s) => (
-                  <div 
-                    key={s.id} 
-                    onClick={() => setShowSubscriptionModal({ show: true, sub: s })}
-                    className="min-w-[150px] flex-shrink-0 bg-zinc-900 p-5 rounded-3xl border border-white/5 space-y-4 active:scale-95 transition-transform cursor-pointer"
-                  >
-                    <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center font-black text-zinc-400 text-xl overflow-hidden border border-white/5">
-                      {s.name[0]}
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-zinc-100 truncate">{s.name}</p>
-                      <p className="text-[10px] text-zinc-500">قادم: {new Date(s.nextBillingDate).toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' })}</p>
-                    </div>
-                    <p className="text-sm font-black text-white">{s.amount.toFixed(2)} {appCurrency}</p>
-                  </div>
-                )) : (
-                   <div className="w-full bg-zinc-900 p-6 rounded-3xl border border-white/5 text-center space-y-2">
-                      <CreditCard className="mx-auto text-zinc-800" size={32} />
-                      <p className="text-xs text-zinc-500 font-bold">لا توجد اشتراكات نشطة</p>
-                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Recent Transactions */}
-            <div className="space-y-4 pb-12">
-              <div className="flex justify-between items-center px-1">
-                <div className="flex items-center gap-3">
-                  <h2 className="font-bold text-zinc-100">آخر العمليات</h2>
-                  {lastTransactionId && (
-                    <button 
-                      onClick={handleUndo}
-                      className="text-[10px] font-black text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20 active:scale-95 transition-all"
-                    >
-                      تراجع (إلغاء العملية)
-                    </button>
-                  )}
-                </div>
-                <button 
-                  onClick={() => setShowAllTransactions(true)}
-                  className="text-xs font-bold text-zinc-500 hover:text-zinc-300"
-                >
-                  الكل
-                </button>
-              </div>
-              <div className="space-y-3">
-                {transactions.length > 0 ? transactions.slice(0, 5).map((t) => {
-                  const category = CATEGORIES[t.category];
-                  const isExpense = t.type === 'expense';
-                  const isTransfer = t.type === 'transfer';
-                  
-                  return (
-                    <motion.div 
-                      layout
-                      key={t.id} 
-                      className="bg-zinc-900 p-4 rounded-[2rem] flex items-center gap-5 border border-white/5 hover:border-white/10 transition-colors"
-                    >
-                      <div className={`p-4 rounded-2xl ${category.color} shadow-sm grayscale brightness-75 contrast-125`}>
-                        <category.icon size={24} />
-                      </div>
-                      <div className="flex-1 min-w-0 text-right">
-                        <p className="font-bold text-zinc-100 truncate">{t.description}</p>
-                        <div className="flex items-center gap-2 mt-0.5 justify-end">
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase">
-                            {isTransfer ? 'تحويل بنكي' : category.label}
-                          </span>
-                          <span className="w-1 h-1 bg-zinc-800 rounded-full"></span>
-                          <span className="text-[10px] font-bold text-zinc-600 uppercase">
-                            {WALLET_LABELS[t.wallet]}
-                            {isTransfer && t.toWallet && ` ← ${WALLET_LABELS[t.toWallet]}`}
-                          </span>
-                        </div>
-                      </div>
-                      <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-zinc-100' : isTransfer ? 'text-amber-500' : 'text-emerald-500'}`}>
-                        {isExpense ? '-' : isTransfer ? '⇄' : '+'} {t.amount.toFixed(2)}
-                      </div>
-                    </motion.div>
-                  );
-                }) : (
-                  <div className="text-center py-12 space-y-4">
-                    <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto text-zinc-800">
-                      <LayoutDashboard size={32} />
-                    </div>
-                    <p className="text-zinc-500 text-sm">ابدأ بتسجيل أول مصروف لك عبر الضغط على +</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
+      <main className="p-4 space-y-10 max-w-lg mx-auto pb-32">
+        {activeTab === 'home' && <DashboardTab />}
 
         {activeTab === 'analysis' && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
@@ -691,12 +804,81 @@ export default function App() {
                   />
                 </RechartsPieChart>
               </ResponsiveContainer>
-              <div className="absolute text-center mt-[-10%] pointer-events-none">
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">إجمالي المصروف</p>
-                <p className="text-3xl font-black text-white">{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {appCurrency}</p>
-              </div>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-4">
+                  <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">إجمالي المصروف</p>
+                  <p className="text-base sm:text-lg font-black text-white text-center break-words max-w-[100px]">
+                    {totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                    <span className="text-[9px] opacity-40 mr-1">{appCurrency}</span>
+                  </p>
+                </div>
             </div>
             
+            <div className="bg-zinc-900 rounded-[3rem] p-8 border border-white/5 space-y-6">
+              <div className="px-2">
+                <h3 className="text-lg font-black text-white">تحركات الميزانية</h3>
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">آخر 6 أشهر</p>
+              </div>
+              
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData}>
+                    <defs>
+                      <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                    <XAxis 
+                      dataKey="month" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#71717a', fontSize: 10, fontWeight: 'bold' }} 
+                      dy={10}
+                    />
+                    <YAxis hide />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#18181b', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.1)', direction: 'rtl' }}
+                      itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="income" 
+                      stroke="#10b981" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#colorIncome)" 
+                      name="الدخل"
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="expense" 
+                      stroke="#ef4444" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#colorExpense)" 
+                      name="المصروف"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="flex justify-center gap-6 mt-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/50"></div>
+                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">الدخل</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-rose-500 shadow-lg shadow-rose-500/50"></div>
+                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">المصروف</span>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-5">
                <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 shadow-sm">
                   <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-xl flex items-center justify-center mb-4"><ArrowDownLeft size={20} /></div>
@@ -770,7 +952,7 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 pb-20">
             <h2 className="text-2xl font-bold px-1 text-white">الإعدادات</h2>
             
-            {user?.isAdmin && (
+            {!!user?.isAdmin && (
               <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-[2.5rem] space-y-4">
                 <div className="p-4 space-y-2">
                   <h3 className="text-lg font-black text-emerald-500">لوحة الإدارة</h3>
@@ -801,6 +983,23 @@ export default function App() {
                 تعديل الأرصدة والعملة
               </button>
             </div>
+
+            <button 
+              onClick={() => setShowTutorial(true)}
+              className="w-full flex items-center justify-center gap-4 p-8 bg-zinc-900 rounded-[3rem] border border-white/5 hover:border-amber-500/30 transition-all group overflow-hidden relative active:scale-95 shadow-xl"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
+              <div className="p-4 bg-amber-500/10 rounded-2xl text-amber-400 group-hover:scale-110 transition-transform">
+                <Info size={32} />
+              </div>
+              <div className="flex-1 text-right">
+                <h4 className="font-black text-white text-lg">تعليمات الاستخدام</h4>
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">شرح شامل لمزايا التطبيق</p>
+              </div>
+              <div className="p-3 bg-zinc-800 rounded-xl text-zinc-600">
+                <ChevronRight size={20} />
+              </div>
+            </button>
 
             <button 
               onClick={() => setShowInstallGuide(true)}
@@ -1012,50 +1211,52 @@ export default function App() {
       </main>
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-zinc-950/80 backdrop-blur-2xl border-t border-white/5 px-6 py-4 flex justify-between items-center safe-bottom z-40 lg:max-w-lg lg:mx-auto lg:rounded-t-[3rem]">
-        <button 
-          onClick={() => setActiveTab('home')}
-          className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'home' ? 'text-white scale-110' : 'text-zinc-500'}`}
-        >
-          <LayoutDashboard size={26} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
-          <span className="text-[9px] font-bold uppercase tracking-tighter">الرئيسية</span>
-        </button>
-        
-        <div className="relative">
+      <div className="fixed bottom-8 left-6 right-6 z-40 lg:max-w-lg lg:mx-auto">
+        <nav className="bg-zinc-900/80 backdrop-blur-3xl rounded-[3rem] border border-white/5 py-4 px-6 flex justify-between items-center shadow-[0_25px_60px_rgba(0,0,0,0.6)]">
           <button 
-            onClick={() => setShowAddModal(true)}
-            className="absolute -top-16 left-1/2 -translate-x-1/2 bg-white text-zinc-950 p-6 rounded-[2rem] shadow-[0_20px_50px_rgba(255,255,255,0.2)] ring-8 ring-zinc-950 active:scale-90 transition-all font-black"
+            onClick={() => setActiveTab('home')}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'home' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
           >
-            <Plus size={32} strokeWidth={3} />
+            <LayoutDashboard size={22} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'home' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الرئيسية</span>
           </button>
-        </div>
-
-        <div className="flex gap-8">
+          
           <button 
             onClick={() => setActiveTab('analysis')}
-            className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'analysis' ? 'text-white scale-110' : 'text-zinc-500'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'analysis' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
           >
-            <PieChart size={26} strokeWidth={activeTab === 'analysis' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-tighter">التحليل</span>
+            <PieChart size={22} strokeWidth={activeTab === 'analysis' ? 2.5 : 2} />
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'analysis' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}التحليل</span>
           </button>
+
+          <div className="relative -mt-16">
+            <motion.button 
+              whileHover={{ scale: 1.1, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setShowAddModal(true)}
+              className="bg-white text-zinc-950 p-5 rounded-3xl shadow-[0_20px_40px_rgba(255,255,255,0.15)] ring-[10px] ring-zinc-950 transition-all"
+            >
+              <Plus size={28} strokeWidth={3} />
+            </motion.button>
+          </div>
 
           <button 
             onClick={() => setActiveTab('funds')}
-            className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'funds' ? 'text-white scale-110' : 'text-zinc-500'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'funds' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
           >
-            <Shield size={26} strokeWidth={activeTab === 'funds' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-tighter">الصناديق</span>
+            <Shield size={22} strokeWidth={activeTab === 'funds' ? 2.5 : 2} />
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'funds' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الصناديق</span>
           </button>
 
           <button 
             onClick={() => setActiveTab('settings')}
-            className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'settings' ? 'text-white scale-110' : 'text-zinc-500'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'settings' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
           >
-            <Settings size={26} strokeWidth={activeTab === 'settings' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-tighter">الإعدادات</span>
+            <Settings size={22} strokeWidth={activeTab === 'settings' ? 2.5 : 2} />
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'settings' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الإعدادات</span>
           </button>
-        </div>
-      </nav>
+        </nav>
+      </div>
 
       {/* Modals */}
       <AnimatePresence>
@@ -1359,9 +1560,15 @@ function MasterBalanceModal({
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={cash}
-                  onChange={(e) => setCash(e.target.value)}
+                  onChange={(e) => {
+                    const val = convertArabicNumerals(e.target.value);
+                    if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                      setCash(val);
+                    }
+                  }}
                   className="bg-transparent text-3xl font-black text-white outline-none w-full"
                  />
                  <span className="text-lg font-bold text-zinc-600">{appCurrency}</span>
@@ -1374,9 +1581,15 @@ function MasterBalanceModal({
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={bank}
-                  onChange={(e) => setBank(e.target.value)}
+                  onChange={(e) => {
+                    const val = convertArabicNumerals(e.target.value);
+                    if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                      setBank(val);
+                    }
+                  }}
                   className="bg-transparent text-3xl font-black text-white outline-none w-full"
                  />
                  <span className="text-lg font-bold text-zinc-600">{appCurrency}</span>
@@ -1396,9 +1609,15 @@ function MasterBalanceModal({
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={emergency}
-                  onChange={(e) => setEmergency(e.target.value)}
+                  onChange={(e) => {
+                    const val = convertArabicNumerals(e.target.value);
+                    if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                      setEmergency(val);
+                    }
+                  }}
                   className="bg-transparent text-3xl font-black text-amber-200 outline-none w-full"
                  />
                  <span className="text-lg font-bold text-amber-500/50">{appCurrency}</span>
@@ -1411,9 +1630,15 @@ function MasterBalanceModal({
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={savings}
-                  onChange={(e) => setSavings(e.target.value)}
+                  onChange={(e) => {
+                    const val = convertArabicNumerals(e.target.value);
+                    if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                      setSavings(val);
+                    }
+                  }}
                   className="bg-transparent text-3xl font-black text-indigo-200 outline-none w-full"
                  />
                  <span className="text-lg font-bold text-indigo-500/50">{appCurrency}</span>
@@ -1509,9 +1734,15 @@ function FundManagerModal({
           </div>
           <div className="relative group">
             <input 
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={emergency}
-              onChange={(e) => setEmergency(e.target.value)}
+              onChange={(e) => {
+                const val = convertArabicNumerals(e.target.value);
+                if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                  setEmergency(val);
+                }
+              }}
               className="w-full bg-zinc-900 border border-white/5 p-6 rounded-[2rem] text-3xl font-black text-white focus:border-amber-500 outline-none transition-all"
               placeholder="0.00"
             />
@@ -1529,9 +1760,15 @@ function FundManagerModal({
           </div>
           <div className="relative group">
             <input 
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={savings}
-              onChange={(e) => setSavings(e.target.value)}
+              onChange={(e) => {
+                const val = convertArabicNumerals(e.target.value);
+                if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                  setSavings(val);
+                }
+              }}
               className="w-full bg-zinc-900 border border-white/5 p-6 rounded-[2rem] text-3xl font-black text-white focus:border-indigo-500 outline-none transition-all"
               placeholder="0.00"
             />
@@ -1733,9 +1970,15 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">المبلغ الشهري</label>
             <input 
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                const val = convertArabicNumerals(e.target.value);
+                if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                  setAmount(val);
+                }
+              }}
               className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20"
               placeholder="0.00"
             />
@@ -1802,28 +2045,33 @@ function Tutorial({ onComplete }: { onComplete: () => void }) {
       icon: <LayoutDashboard size={40} className="text-white" />
     },
     {
-      title: "ميزانيتك الإجمالية 💰",
-      description: "هنا تقدر تشوف إجمالي مبالغك في الكاش والبنك، وتطالع دخلك ومصروفك الشهري بوضوح.",
+      title: "الميزانية والتحركات 💰",
+      description: "في الصفحة الرئيسية، تقدر تشوف إجمالي مبالغك (كاش وبنك)، وتطالع الرسم البياني اللي يوضح لك 'تحركات الميزانية' ومقارنة الدخل بالمصروف.",
       icon: <PieChart size={40} className="text-amber-500" />
     },
     {
-      title: "الاشتراكات الشهرية 💳",
-      description: "تقدر تضيف اشتراكاتك (نتفليكس، نادي، غيره) والتطبيق راح يذكرك بموعد التجديد ويخصمها تلقائياً.",
-      icon: <CreditCard size={40} className="text-blue-500" />
-    },
-    {
-      title: "إضافة عملية جديدة ➕",
-      description: "الزر اللي في النص هو قلب التطبيق. أي ريال تصرفه أو يجيك، سجله هنا فوراً عشان ما تنساه.",
+      title: "إضافة عملية (الزر الأهم!) ➕",
+      description: "الزر اللي في النص تحت (+) هو أهم زر في التطبيق. أي مبلغ تصرفه أو يدخل لك، سجل بالضغط عليه مباشرة عشان ميزانيتك تظل دقيقة.",
       icon: <Plus size={40} className="text-emerald-500" />
     },
     {
-      title: "تراجع عن الخطأ 🔄",
-      description: "غلطت في تسجيل عملية؟ لا تشيل هم، زر 'تراجع' يطلع لك فوراً بعد كل عملية عشان تمسحها بضغطة وحدة.",
-      icon: <ArrowRightLeft size={40} className="text-rose-500" />
+      title: "قسم التحليل الذكي 📊",
+      description: "زر 'التحليل' في الأسفل يعطيك نظرة أعمق لمصاريفك، إجمالي المصاريف حسب الفئات، ويقولك وين صرفت أكثر.",
+      icon: <PieChart size={40} className="text-blue-500" />
     },
     {
-      title: "العملات والصناديق 🌍",
-      description: "من الإعدادات تقدر تغير العملة لـ (ريال، درهم، دينار...) وتوزع فلوسك في صناديق ادخار أو طوارئ.",
+      title: "الصناديق والادخار 🛡️",
+      description: "في قسم 'الصناديق'، تقدر تخصص فلوس للطوارئ أو للادخار لمستقبلك بعيداً عن مصاريفك اليومية.",
+      icon: <Shield size={40} className="text-indigo-500" />
+    },
+    {
+      title: "تنبيهات الميزانية 🔔",
+      description: "فوق على اليمين فيه جرس التنبيهات. التطبيق راح ينبهك إذا قربت تخلص ميزانيتك أو فيه تحديثات مهمة تفيدك.",
+      icon: <Bell size={40} className="text-amber-400" />
+    },
+    {
+      title: "جاهز تبدأ؟ 😍",
+      description: "ابدأ بتعديل أرصدتك الحالية من قسم 'الإعدادات'.. وخلنا نساعدك تدير فلوسك صح!",
       icon: <Settings size={40} className="text-zinc-400" />
     }
   ];
@@ -1902,7 +2150,7 @@ function NotificationsModal({
 }: { 
   notifications: AppNotification[], 
   onClose: () => void, 
-  onMarkRead: () => void,
+  onMarkRead: (id: string) => void,
   onDelete: (id: string) => void
 }) {
   return (
@@ -1910,59 +2158,58 @@ function NotificationsModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-zinc-950/90 backdrop-blur-xl"
     >
       <motion.div 
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[80vh]"
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[2.5rem] flex flex-col max-h-[80vh] overflow-hidden shadow-2xl"
+        dir="rtl"
       >
-        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
-          <h2 className="text-xl font-black text-white">التنبيهات</h2>
-          <div className="flex gap-2">
-            <button 
-              onClick={onMarkRead}
-              className="text-[10px] font-black text-zinc-500 hover:text-zinc-300"
-            >
-              قراءة الكل
-            </button>
-            <button onClick={onClose} className="p-1 text-zinc-600 hover:text-zinc-400">
-              <X size={20} />
-            </button>
+        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-zinc-900 sticky top-0 z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
+              <Bell size={20} />
+            </div>
+            <h2 className="text-xl font-black text-white">التنبيهات</h2>
           </div>
+          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500 hover:text-white transition-all">
+            <X size={20} />
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-          {notifications.length > 0 ? notifications.map((n) => (
-            <motion.div 
-              key={n.id}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className={`p-5 rounded-[2rem] border relative transition-all group ${n.isRead ? 'bg-zinc-950/40 border-white/5' : 'bg-zinc-800 border-white/10 shadow-lg'}`}
-            >
-              {!n.isRead && (
-                <span className="absolute top-5 left-5 w-2 h-2 bg-emerald-500 rounded-full"></span>
-              )}
-              <div className="space-y-1">
-                <h3 className="font-bold text-white text-sm pr-4">{n.title}</h3>
-                <p className="text-zinc-400 text-xs leading-relaxed">{n.message}</p>
-                <p className="text-[10px] text-zinc-600 pt-1">
-                  {new Date(n.date).toLocaleDateString('ar-SA', { day: 'numeric', month: 'long', hour: 'numeric', minute: 'numeric' })}
-                </p>
-              </div>
-              <button 
-                onClick={() => onDelete(n.id)}
-                className="absolute bottom-5 left-5 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-rose-500/50 hover:text-rose-500"
+          {notifications.length > 0 ? (
+            notifications.map(n => (
+              <div 
+                key={n.id} 
+                onClick={() => !n.isRead && onMarkRead(n.id)}
+                className={`p-5 rounded-3xl border transition-all cursor-pointer group relative ${n.isRead ? 'bg-zinc-950/50 border-white/5' : 'bg-white/5 border-emerald-500/20 shadow-lg shadow-emerald-500/5'}`}
               >
-                <X size={14} />
-              </button>
-            </motion.div>
-          )) : (
-            <div className="py-20 text-center space-y-4">
-              <div className="w-16 h-16 bg-zinc-950 rounded-full flex items-center justify-center mx-auto text-zinc-800">
-                <Bell size={24} />
+                <div className="flex justify-between items-start gap-4">
+                  <div className="space-y-1">
+                    <h3 className={`font-bold text-sm ${n.isRead ? 'text-zinc-300' : 'text-white'}`}>{n.title}</h3>
+                    <p className="text-xs text-zinc-500 leading-relaxed">{n.message}</p>
+                    <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest pt-1">
+                      {new Date(n.date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); onDelete(n.id); }}
+                    className="opacity-0 group-hover:opacity-100 p-2 bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {!n.isRead && <div className="absolute top-4 left-4 w-2 h-2 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/50"></div>}
               </div>
-              <p className="text-zinc-500 text-xs font-bold">لا توجد تنبيهات جديدة</p>
+            ))
+          ) : (
+            <div className="py-20 text-center space-y-4">
+              <div className="w-16 h-16 bg-zinc-950 rounded-[2rem] flex items-center justify-center mx-auto text-zinc-800 shadow-inner">
+                <BellOff size={32} />
+              </div>
+              <p className="text-sm font-bold text-zinc-500">لا توجد تنبيهات جديدة</p>
             </div>
           )}
         </div>
@@ -2001,9 +2248,9 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       await api.broadcastNotification(broadcastTitle, broadcastMessage);
       setBroadcastTitle('');
       setBroadcastMessage('');
-      alert('تم إرسال التنبيه لجميع المستخدمين بنجاح!');
+      alert('تم إرسال التنبيه للجميع بنجاح');
     } catch (err) {
-      console.error(err);
+      alert('فشل إرسال التنبيه');
     } finally {
       setSending(false);
     }
@@ -2014,19 +2261,20 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-950/95 backdrop-blur-3xl"
     >
       <motion.div 
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+        initial={{ scale: 0.9, y: 30 }}
+        animate={{ scale: 1, y: 0 }}
+        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        dir="rtl"
       >
-        <div className="p-8 border-b border-white/5 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
+        <div className="p-8 border-b border-white/5 flex justify-between items-center bg-zinc-900 sticky top-0 z-10">
           <div>
-            <h2 className="text-xl font-black text-white">لوحة الإدارة</h2>
-            <p className="text-[10px] text-zinc-500 font-bold">إدارة المستخدمين وتبليغ الجميع</p>
+            <h2 className="text-2xl font-black text-emerald-500">لوحة الإدارة</h2>
+            <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">إدارة المستخدمين والنظام</p>
           </div>
-          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
+          <button onClick={onClose} className="p-4 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500 hover:text-white transition-all">
             <X size={24} />
           </button>
         </div>
@@ -2034,96 +2282,124 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
         <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
           {/* Broadcast Section */}
           <div className="space-y-6">
-            <h3 className="text-sm font-black text-white flex items-center gap-2">
-              <Bell size={18} className="text-emerald-500" />
-              إرسال تنبيه عام لكل المشتركين
-            </h3>
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-500">
+                <Bell size={24} />
+              </div>
+              <h3 className="text-lg font-black text-white">تنبيه عام للمستخدمين</h3>
+            </div>
+            
             <div className="space-y-4">
               <input 
                 type="text"
                 placeholder="عنوان التنبيه"
                 value={broadcastTitle}
                 onChange={(e) => setBroadcastTitle(e.target.value)}
-                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-sm outline-none focus:border-emerald-500/50 transition-all"
+                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500/30 transition-all font-bold"
               />
               <textarea 
-                placeholder="نص التنبيه..."
+                placeholder="رسالة التنبيه المرسلة لجميع المستخدمين..."
                 value={broadcastMessage}
                 onChange={(e) => setBroadcastMessage(e.target.value)}
-                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-sm outline-none focus:border-emerald-500/50 transition-all min-h-[100px]"
+                rows={3}
+                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500/30 transition-all font-bold resize-none"
               />
               <button 
                 onClick={handleBroadcast}
                 disabled={sending || !broadcastTitle || !broadcastMessage}
-                className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                className="w-full py-5 bg-amber-500 text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl shadow-amber-500/10 disabled:opacity-50"
               >
-                {sending ? 'جاري الإرسال...' : 'إرسال للجميع الآن'}
+                {sending ? 'جاري الإرسال...' : 'إرسال التنبيه الآن'}
               </button>
             </div>
           </div>
 
-          {/* User List Section */}
-          <div className="space-y-6">
-            <h3 className="text-sm font-black text-white flex items-center gap-2">
-              <Users size={18} className="text-blue-500" />
-              قائمة المستخدمين ({users.length})
-            </h3>
-            <div className="space-y-2">
+          <div className="w-full h-px bg-white/5"></div>
+
+          {/* Users List Section */}
+          <div className="space-y-6 pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-500">
+                  <Users size={24} />
+                </div>
+                <h3 className="text-lg font-black text-white">قائمة المستخدمين</h3>
+              </div>
+              <span className="text-[10px] font-black text-zinc-500 bg-zinc-950 px-3 py-1 rounded-full border border-white/5 uppercase">
+                {users.length} مستخدم
+              </span>
+            </div>
+
+            <div className="space-y-3">
               {loading ? (
-                <p className="text-xs text-zinc-500 text-center py-10">جاري تحميل المستخدمين...</p>
-              ) : users.map(u => (
-                  <div key={u.id} className="p-4 bg-zinc-950/50 rounded-2xl border border-white/5 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-sm font-bold text-white">{u.displayName}</p>
-                        <p className="text-[10px] text-zinc-500">{u.email}</p>
+                <div className="py-10 text-center space-y-4">
+                  <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto"></div>
+                  <p className="text-xs text-zinc-500 font-bold">جاري جلب بيانات المستخدمين...</p>
+                </div>
+              ) : (
+                users.map(u => (
+                  <div key={u.id} className="p-5 bg-zinc-950/50 rounded-[2rem] border border-white/5 space-y-5 hover:border-white/10 transition-all">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <p className="font-black text-white">{u.displayName}</p>
+                        <p className="text-[10px] text-zinc-500 font-mono">{u.email}</p>
                       </div>
-                      {u.isAdmin && (
-                        <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 text-[10px] font-black rounded-full border border-emerald-500/20">
-                          مدير
-                        </span>
+                      {u.isAdmin ? (
+                        <div className="bg-emerald-500/10 text-emerald-500 px-3 py-1 rounded-lg text-[10px] font-black border border-emerald-500/20 flex items-center gap-1.5 shadow-sm">
+                          <Shield size={10} />
+                          MEMBER ADMIN
+                        </div>
+                      ) : (
+                        <div className="bg-zinc-800 text-zinc-400 px-3 py-1 rounded-lg text-[10px] font-black flex items-center gap-1.5">
+                          <UserIcon size={10} />
+                          STANDARD
+                        </div>
                       )}
                     </div>
                     
-                    <div className="flex gap-2">
+                    <div className="flex gap-3">
                       <button 
                         onClick={async () => {
-                          const pass = prompt('أدخل كلمة المرور الجديدة لهذا المستخدم:');
-                          if (pass) {
+                          const pass = prompt(`تغيير كلمة المرور للمستخدم (${u.displayName}):`);
+                          if (pass && pass.length >= 6) {
                             try {
                               await api.resetUserPassword(u.id, pass);
-                              alert('تم تحديث كلمة المرور بنجاح!');
-                            } catch (err) {
-                              alert('فشلت العملية');
+                              alert('تم تغيير كلمة المرور بنجاح');
+                            } catch (e: any) {
+                              alert(e.message || 'فشلت العملية');
                             }
+                          } else if (pass) {
+                            alert('يجب أن تكون كلمة المرور 6 خانات على الأقل');
                           }
                         }}
-                        className="flex-1 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-zinc-400 hover:text-white transition-all uppercase tracking-widest"
+                        className="flex-1 py-3 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-blue-400 hover:bg-blue-400 hover:text-white transition-all active:scale-95"
                       >
-                        إعادة تعيين كلمة المرور
+                        إعادة تعيين الباسوورد
                       </button>
                       
-                      <button 
-                        onClick={async () => {
-                          if (confirm(`هل أنت متأكد من حذف المستخدم "${u.displayName}"؟ سيتم حذف جميع بياناته نهائياً.`)) {
-                            try {
-                              await api.deleteUser(u.id);
-                              alert('تم حذف المستخدم بنجاح');
-                              loadUsers(); // Refresh list
-                            } catch (err: any) {
-                              alert(err.message || 'فشل الحذف');
+                      {!u.isAdmin && (
+                        <button 
+                          onClick={async () => {
+                            if (confirm(`هل أنت متأكد من حذف المستخدم "${u.displayName}" نهائياً؟ سيتم مسح جميع بياناته.`)) {
+                              try {
+                                await api.deleteUser(u.id);
+                                loadUsers();
+                                alert('تم حذف المستخدم وكافة بياناته بنجاح');
+                              } catch (e: any) {
+                                alert(e.message || 'فشل حذف المستخدم');
+                              }
                             }
-                          }
-                        }}
-                        className="p-2 px-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500 hover:text-white transition-all"
-                        title="حذف المستخدم"
-                      >
-                        <X size={14} />
-                      </button>
+                          }}
+                          className="px-4 py-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 hover:bg-rose-500 hover:text-white transition-all active:scale-90"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       </motion.div>
@@ -2140,6 +2416,11 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
   const [wallet, setWallet] = useState<WalletType>('bank');
   const [toWallet, setToWallet] = useState<WalletType>('cash');
   const [isSubscription, setIsSubscription] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   
   // Converter states
   const [convertFrom, setConvertFrom] = useState('USD');
@@ -2181,6 +2462,92 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
     
     setAmount(finalAmount.toFixed(2));
     setShowConverter(false);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result as string;
+      setPreviewImage(base64);
+      analyzeReceipt(base64);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const analyzeReceipt = async (base64Image: string) => {
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error("API Key missing");
+      }
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      const prompt = `الرجاء تحليل صورة الفاتورة المرفقة واستخراج البيانات التالية بتنسيق JSON حصراً:
+      {
+        "amount": number,
+        "description": "وصف مختصر للعملية",
+        "category": "إحدى هذه القيم فقط: food, shopping, transport, health, fun, bills, home, other",
+        "wallet": "إحدى هذه القيم فقط: cash, bank"
+      }
+      ملاحظات:
+      - المبلغ يجب أن يكون رقماً.
+      - الوصف باللغة العربية.
+      - التصنيف يجب أن يكون مطابقاً للقيم الإنجليزية المذكورة.
+      - إذا لم تكن العملة واضحة، افترض أنها ${appCurrency}.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: {
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: "image/jpeg",
+                data: base64Image.split(',')[1]
+              }
+            }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              amount: { type: Type.NUMBER },
+              description: { type: Type.STRING },
+              category: { 
+                type: Type.STRING, 
+                enum: ["food", "shopping", "transport", "health", "fun", "bills", "home", "other"]
+              },
+              wallet: { 
+                type: Type.STRING, 
+                enum: ["cash", "bank"]
+              }
+            },
+            required: ["amount", "description", "category", "wallet"]
+          }
+        }
+      });
+
+      const data = JSON.parse(response.text || '{}');
+      if (data.amount) setAmount(data.amount.toString());
+      if (data.description) setDescription(data.description);
+      if (data.category) setCategory(data.category);
+      if (data.wallet) setWallet(data.wallet);
+    } catch (err: any) {
+      console.error("Receipt Analysis Error:", err);
+      let errorMsg = "حدث خطأ أثناء تحليل الصورة. تأكد من وضوح الصورة وحاول مرة أخرى.";
+      if (err.message?.includes("API_KEY_INVALID")) {
+        errorMsg = "خطأ في مفتاح API. يرجى التحقق من الإعدادات.";
+      }
+      setAnalysisError(errorMsg);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -2245,9 +2612,60 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
              </button>
            ))}
         </div>
+        <div className="relative">
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef}
+            onChange={handleImageUpload}
+          />
+          <button 
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-3 rounded-2xl border border-white/5 transition-all ${isAnalyzing ? 'bg-amber-500 text-zinc-950 animate-pulse' : 'bg-zinc-900 text-zinc-500 active:bg-zinc-800'}`}
+          >
+            {isAnalyzing ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col space-y-10 max-w-lg mx-auto w-full">
+        {previewImage && (
+          <div className="relative w-full aspect-video rounded-[2rem] overflow-hidden border border-white/10 group">
+            <img src={previewImage} className="w-full h-full object-cover" alt="Receipt Preview" />
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <button 
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="bg-rose-500 p-3 rounded-full text-white shadow-xl"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            {isAnalyzing && (
+              <div className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+                <Loader2 size={40} className="text-amber-500 animate-spin" />
+                <p className="text-xs font-black text-amber-500 uppercase tracking-widest animate-pulse">جاري فحص الفاتورة بذكاء...</p>
+              </div>
+            )}
+            {analysisError && (
+              <div className="absolute inset-0 bg-rose-500/20 backdrop-blur-md flex flex-col items-center justify-center gap-3 p-6 text-center">
+                <div className="w-12 h-12 bg-rose-500/20 text-rose-500 rounded-full flex items-center justify-center">
+                  <X size={24} />
+                </div>
+                <p className="text-sm font-bold text-white leading-relaxed">{analysisError}</p>
+                <button 
+                  type="button"
+                  onClick={() => analyzeReceipt(previewImage!)}
+                  className="mt-2 px-6 py-2 bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-500/20"
+                >
+                  إعادة المحاولة
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className="space-y-4 text-center relative">
           <div className="flex justify-between items-center px-1">
             <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">أدخل المبلغ</label>
@@ -2264,47 +2682,67 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
             <motion.div 
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
-              className="bg-zinc-900 p-4 rounded-3xl border border-white/5 flex items-center gap-3"
+              className="bg-zinc-900 p-5 rounded-[2rem] border border-amber-500/10 space-y-4 shadow-2xl shadow-amber-500/5 overflow-hidden"
             >
-              <input 
-                type="number"
-                placeholder="المبلغ"
-                value={convertAmount}
-                onChange={(e) => setConvertAmount(e.target.value)}
-                className="flex-1 bg-zinc-950 border border-white/5 p-3 rounded-xl text-white outline-none"
-              />
-              <select 
-                value={convertFrom}
-                onChange={(e) => setConvertFrom(e.target.value)}
-                className="bg-zinc-950 border border-white/5 p-3 rounded-xl text-white outline-none text-xs"
-              >
-                {['USD', 'SAR', 'EGP', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-                <option disabled>──────</option>
-                {Object.keys(rates).filter(c => !['USD', 'SAR', 'EGP', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].includes(c)).slice(0, 50).map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+              <div className="flex gap-3">
+                <div className="flex-1 relative group">
+                  <input 
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="المبلغ المراد تحويله"
+                    value={convertAmount}
+                    onChange={(e) => {
+                      const val = convertArabicNumerals(e.target.value);
+                      if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                        setConvertAmount(val);
+                      }
+                    }}
+                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none text-lg font-black focus:border-amber-500/50 transition-all text-center placeholder:text-zinc-800 placeholder:text-sm"
+                  />
+                </div>
+                <div className="w-24 relative">
+                  <select 
+                    value={convertFrom}
+                    onChange={(e) => setConvertFrom(e.target.value)}
+                    className="w-full h-full bg-zinc-950 border border-white/5 p-3 rounded-2xl text-white outline-none text-xs font-black appearance-none cursor-pointer text-center focus:border-amber-500/50 transition-all"
+                  >
+                    {['USD', 'SAR', 'EGP', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    <option disabled>──────</option>
+                    {Object.keys(rates).filter(c => !['USD', 'SAR', 'EGP', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].includes(c)).slice(0, 50).map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-600">
+                    <ChevronDown size={12} />
+                  </div>
+                </div>
+              </div>
               <button 
                 type="button"
                 onClick={handleConvert}
-                className="bg-amber-500 text-zinc-950 px-4 py-3 rounded-xl font-black text-xs"
+                className="w-full bg-amber-500 text-zinc-950 py-4 rounded-2xl font-black text-sm shadow-lg shadow-amber-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ring-4 ring-amber-500/10"
               >
-                تحويل
+                تطبيق التحويل إلى {appCurrency}
               </button>
             </motion.div>
           )}
 
           <div className="flex items-center justify-center gap-3">
              <input 
-              type="number" 
+              type="text" 
               autoFocus
               inputMode="decimal"
               placeholder="0.00"
               className="w-full text-7xl font-black bg-transparent border-none outline-none focus:ring-0 placeholder:text-zinc-900 text-center tabular-nums text-white"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                const val = convertArabicNumerals(e.target.value);
+                if (val === '' || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                  setAmount(val);
+                }
+              }}
             />
             <span className="text-2xl font-bold text-zinc-600">{appCurrency}</span>
           </div>
