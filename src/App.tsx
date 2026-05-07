@@ -2085,22 +2085,42 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
                       )}
                     </div>
                     
-                    <button 
-                      onClick={async () => {
-                        const pass = prompt('أدخل كلمة المرور الجديدة لهذا المستخدم:');
-                        if (pass) {
-                          try {
-                            await api.resetUserPassword(u.id, pass);
-                            alert('تم تحديث كلمة المرور بنجاح!');
-                          } catch (err) {
-                            alert('فشلت العملية');
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={async () => {
+                          const pass = prompt('أدخل كلمة المرور الجديدة لهذا المستخدم:');
+                          if (pass) {
+                            try {
+                              await api.resetUserPassword(u.id, pass);
+                              alert('تم تحديث كلمة المرور بنجاح!');
+                            } catch (err) {
+                              alert('فشلت العملية');
+                            }
                           }
-                        }
-                      }}
-                      className="w-full py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-zinc-400 hover:text-white transition-all uppercase tracking-widest"
-                    >
-                      إعادة تعيين كلمة المرور
-                    </button>
+                        }}
+                        className="flex-1 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-zinc-400 hover:text-white transition-all uppercase tracking-widest"
+                      >
+                        إعادة تعيين كلمة المرور
+                      </button>
+                      
+                      <button 
+                        onClick={async () => {
+                          if (confirm(`هل أنت متأكد من حذف المستخدم "${u.displayName}"؟ سيتم حذف جميع بياناته نهائياً.`)) {
+                            try {
+                              await api.deleteUser(u.id);
+                              alert('تم حذف المستخدم بنجاح');
+                              loadUsers(); // Refresh list
+                            } catch (err: any) {
+                              alert(err.message || 'فشل الحذف');
+                            }
+                          }
+                        }}
+                        className="p-2 px-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500 hover:text-white transition-all"
+                        title="حذف المستخدم"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

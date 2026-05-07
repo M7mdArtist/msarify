@@ -126,14 +126,19 @@ export const api = {
   
   // Admin
   async getAdminUsers(): Promise<any[]> {
-    const res = await fetch(`${API_BASE}/admin/users`);
+    const res = await fetch(`${API_BASE}/admin/users`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem('token')}` }
+    });
     return res.json();
   },
 
   async broadcastNotification(title: string, message: string): Promise<void> {
     await fetch(`${API_BASE}/admin/broadcast`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}`
+      },
       body: JSON.stringify({ title, message }),
     });
   },
@@ -141,9 +146,23 @@ export const api = {
   async resetUserPassword(uid: string, newPassword: string): Promise<void> {
     await fetch(`${API_BASE}/admin/users/${uid}/reset-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}`
+      },
       body: JSON.stringify({ newPassword }),
     });
+  },
+
+  async deleteUser(uid: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/admin/users/${uid}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${localStorage.getItem('token')}` }
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to delete user");
+    }
   },
 
   async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {
