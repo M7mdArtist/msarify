@@ -650,7 +650,7 @@ export default function App() {
               >
                 <div className={`w-14 h-14 rounded-[1.25rem] ${category.color} flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300 relative overflow-hidden`}>
                    <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                   <category.icon size={24} className="text-white relative z-10" />
+                   <category.icon size={24} className="relative z-10" />
                 </div>
                 <div className="flex-1 min-w-0 text-right">
                   <p className="font-black text-sm text-white truncate mb-0.5 tracking-tight">{t.description}</p>
@@ -1816,7 +1816,7 @@ function AllTransactionsModal({ transactions, onClose, appCurrency }: { transact
           const isTransfer = t.type === 'transfer';
           return (
             <div key={t.id} className="bg-zinc-900 p-4 rounded-[2rem] flex items-center gap-5 border border-white/5">
-              <div className={`p-4 rounded-2xl ${category.color} shadow-sm grayscale brightness-75`}>
+              <div className={`p-4 rounded-2xl ${category.color} shadow-sm`}>
                 <category.icon size={24} />
               </div>
               <div className="flex-1 min-w-0 text-right">
@@ -1882,7 +1882,7 @@ function SnapshotDetailModal({ snapshot, onClose, appCurrency }: { snapshot: Sna
           const isTransfer = t.type === 'transfer';
           return (
             <div key={t.id} className="bg-zinc-900/50 p-4 rounded-[2rem] flex items-center gap-5 border border-white/5 opacity-80">
-              <div className={`p-4 rounded-2xl ${category.color} shadow-sm grayscale brightness-75`}>
+              <div className={`p-4 rounded-2xl ${category.color} shadow-sm`}>
                 <category.icon size={24} />
               </div>
               <div className="flex-1 min-w-0 text-right">
