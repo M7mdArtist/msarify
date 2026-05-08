@@ -18,6 +18,8 @@ import {
   LogOut,
   Shield,
   Users,
+  Eye,
+  EyeOff,
   TrendingUp,
   Info,
   User as UserIcon,
@@ -29,8 +31,14 @@ import {
   ChevronDown,
   Trash2,
   Camera,
+  Mic,
   Loader2,
-  Wallet
+  Wallet,
+  Moon,
+  Sun,
+  Languages,
+  Globe,
+  Palette
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
@@ -40,6 +48,28 @@ const convertArabicNumerals = (str: string) => {
     .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
     .replace(/[٫،,]/g, ".");
 };
+
+const getDisplayCurrency = (currency: string, lang: 'ar' | 'en') => {
+  if (lang === 'en') {
+    if (currency === 'ر.س' || currency === 'SAR') return 'SAR';
+    if (currency === 'ج.م' || currency === 'EGP') return 'EGP';
+    if (currency === 'د.ك' || currency === 'KWD') return 'KWD';
+    if (currency === 'د.إ' || currency === 'AED') return 'AED';
+    return currency;
+  } else {
+    if (currency === 'SAR' || currency === 'ر.س') return 'ر.س';
+    if (currency === 'EGP' || currency === 'ج.م') return 'ج.م';
+    if (currency === 'KWD' || currency === 'د.ك') return 'د.ك';
+    if (currency === 'AED' || currency === 'د.إ') return 'د.إ';
+    return currency;
+  }
+};
+
+const formatAmount = (amount: number, isPrivacyMode: boolean) => {
+  if (isPrivacyMode) return '••••';
+  return amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+};
+
 import { 
   CATEGORIES, 
   NECESSITY_LABELS,
@@ -59,7 +89,7 @@ import {
   subMonths, 
   format
 } from 'date-fns';
-import { ar } from 'date-fns/locale';
+import { ar, enUS } from 'date-fns/locale';
 import { 
   Cell, 
   Pie, 
@@ -77,12 +107,59 @@ import {
 } from 'recharts';
 import { api } from './services/api';
 
+import arTranslations from './locales/ar.json';
+import enTranslations from './locales/en.json';
+
+const TRANSLATIONS: Record<'ar' | 'en', any> = {
+  ar: arTranslations,
+  en: enTranslations
+};
+
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'home' | 'analysis' | 'funds' | 'settings'>('home');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [appCurrency, setAppCurrency] = useState('ر.س');
+  const [appCurrency, setAppCurrency] = useState('SAR');
+  
+  // Settings initialization
+  const [language, setLanguage] = useState<'ar' | 'en'>(() => {
+    const stored = localStorage.getItem('user');
+    if (stored) {
+      try {
+        const u = JSON.parse(stored);
+        return u.language || 'ar';
+      } catch (e) {}
+    }
+    return 'ar';
+  });
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const stored = localStorage.getItem('user');
+    if (stored) {
+      try {
+        const u = JSON.parse(stored);
+        return u.theme || 'dark';
+      } catch (e) {}
+    }
+    return 'dark';
+  });
+
+  const t = TRANSLATIONS[language];
+
+  useEffect(() => {
+    const dir = language === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.dir = dir;
+    document.documentElement.lang = language;
+    document.body.dir = dir;
+  }, [language]);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
   
   // Auth states
   const [authEmail, setAuthEmail] = useState('');
@@ -113,6 +190,25 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [exchangeRates, setExchangeRates] = useState<any>({});
+  const [privacyMode, setPrivacyMode] = useState(() => {
+    const stored = localStorage.getItem('user');
+    if (stored) {
+      try {
+        const u = JSON.parse(stored);
+        return !!u.privacyMode;
+      } catch (e) {}
+    }
+    return false;
+  });
+  
+  const togglePrivacyMode = () => {
+    setPrivacyMode(!privacyMode);
+    if (user) {
+      const updatedUser = { ...user, privacyMode: !privacyMode };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      api.saveUser(user.id, { privacyMode: !privacyMode });
+    }
+  };
   
   useEffect(() => {
     const fetchRates = async () => {
@@ -153,7 +249,27 @@ export default function App() {
 
       if (uProfile) {
         setUserBudget(uProfile.budgetThreshold || 0);
-        setAppCurrency(uProfile.currency || 'ر.س');
+        
+        // Preserve currency if it exists in profile, otherwise use language-based default
+        const profileCurrency = uProfile.currency;
+        if (profileCurrency) {
+          setAppCurrency(profileCurrency);
+        } else {
+          setAppCurrency(language === 'ar' ? 'ر.س' : 'SAR');
+        }
+
+        // Only sync settings if they differ from current state and we haven't manually updated recently
+        const recentlyUpdated = Date.now() - lastSettingsUpdate < 5000;
+        
+        if (!recentlyUpdated) {
+          if (uProfile.language && uProfile.language !== language) {
+            setLanguage(uProfile.language as 'ar' | 'en');
+          }
+          if (uProfile.theme && uProfile.theme !== theme) {
+            setTheme(uProfile.theme as 'dark' | 'light');
+          }
+        }
+
         setInitialBalances({
           cash: uProfile.initialCash || 0,
           bank: uProfile.initialBank || 0
@@ -222,11 +338,16 @@ export default function App() {
 
   const currentTotal = walletBalances.cash + walletBalances.bank;
 
+  const displayCurrency = React.useMemo(() => {
+    return getDisplayCurrency(appCurrency, language);
+  }, [appCurrency, language]);
+
   const trendData = React.useMemo(() => {
     const last6Months = Array.from({ length: 6 }).map((_, i) => {
       const date = subMonths(new Date(), i);
+      const currentLocale = language === 'ar' ? ar : enUS;
       return {
-        month: format(date, 'MMM', { locale: ar }),
+        month: format(date, 'MMM', { locale: currentLocale }),
         monthKey: format(date, 'yyyy-MM'),
         income: 0,
         expense: 0
@@ -247,6 +368,33 @@ export default function App() {
   }, [transactions]);
 
   const [isResetConfirming, setIsResetConfirming] = useState(false);
+  
+  const [lastSettingsUpdate, setLastSettingsUpdate] = useState(0);
+
+  const updateSettings = async (updates: Partial<{ theme: 'dark' | 'light', language: 'ar' | 'en' }>) => {
+    if (!user) return;
+    
+    // 1. Update LocalStorage immediately
+    const updatedUser = { ...user, ...updates };
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+    
+    // 2. Mark that we just manually updated settings
+    setLastSettingsUpdate(Date.now());
+    
+    try {
+      // 3. Update local state immediately for instant feedback
+      if (updates.theme) setTheme(updates.theme);
+      if (updates.language) setLanguage(updates.language);
+      
+      // 4. Save to DB
+      await api.saveUser(user.id, updates);
+      
+      // 5. Update the user object state
+      setUser(updatedUser);
+    } catch (err) {
+      console.error("Failed to update settings:", err);
+    }
+  };
 
   const handleUpdateBalance = async (type: WalletType, amount: number) => {
     if (!user) return;
@@ -370,7 +518,7 @@ export default function App() {
         setShowTutorial(true);
       }
     } catch (err: any) {
-      setAuthError(err.message || 'حدث خطأ ما');
+      setAuthError(err.message || t.auth_error_default);
     } finally {
       setAuthLoading(false);
     }
@@ -378,13 +526,13 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950">
         <motion.div 
           animate={{ scale: [1, 1.2, 1] }} 
           transition={{ repeat: Infinity, duration: 1 }}
-          className="text-4xl font-black text-white"
+          className="text-4xl font-black text-zinc-900 dark:text-white"
         >
-          مصاريفي
+          {t.msarify}
         </motion.div>
       </div>
     );
@@ -392,69 +540,69 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-zinc-950" dir="rtl">
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-zinc-50 dark:bg-zinc-950" dir={language === 'ar' ? 'rtl' : 'ltr'}>
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-sm space-y-8"
         >
           <div className="text-center space-y-2">
-            <h1 className="text-5xl font-black text-white">مصاريفي</h1>
-            <p className="text-zinc-500 font-medium">خطوتك الأولى نحو الاستقرار المالي</p>
+            <h1 className="text-5xl font-black text-zinc-900 dark:text-white">{t.msarify}</h1>
+            <p className="text-zinc-500 font-medium">{t.first_step_motto}</p>
           </div>
 
-          <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 space-y-6 shadow-2xl">
-            <div className="flex bg-zinc-950 p-1 rounded-2xl border border-white/5">
+          <div className="bg-white dark:bg-zinc-900 p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 shadow-2xl">
+            <div className="flex bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-black/5 dark:border-white/5">
               <button 
                 onClick={() => setAuthMode('login')}
-                className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${authMode === 'login' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${authMode === 'login' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-400 dark:hover:text-zinc-300'}`}
               >
-                دخول
+                {t.login_tab}
               </button>
               <button 
                 onClick={() => setAuthMode('signup')}
-                className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${authMode === 'signup' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${authMode === 'signup' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-400 dark:hover:text-zinc-300'}`}
               >
-                حساب جديد
+                {t.signup_tab}
               </button>
             </div>
 
             <form onSubmit={handleEmailAuth} className="space-y-4">
               {authMode === 'signup' && (
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">الاسم الكريم</label>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">{t.noble_name}</label>
                   <input 
                     type="text"
                     required
                     value={authName}
                     onChange={(e) => setAuthName(e.target.value)}
-                    placeholder="دخل اسمك هنا"
-                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-bold placeholder:text-zinc-700"
+                    placeholder={t.name_placeholder}
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-200 dark:focus:border-white/20 transition-all font-bold placeholder:text-zinc-400 dark:placeholder:text-zinc-700"
                   />
                 </div>
               )}
               
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">البريد الإلكتروني</label>
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">{t.email_label}</label>
                 <input 
                   type="email"
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
                   placeholder="example@mail.com"
-                  className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-bold placeholder:text-zinc-700"
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-200 dark:focus:border-white/20 transition-all font-bold placeholder:text-zinc-400 dark:placeholder:text-zinc-700"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">كلمة المرور</label>
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">{t.password_label}</label>
                 <input 
                   type="password"
                   required
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-bold placeholder:text-zinc-700"
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-200 dark:focus:border-white/20 transition-all font-bold placeholder:text-zinc-400 dark:placeholder:text-zinc-700"
                 />
               </div>
 
@@ -465,15 +613,15 @@ export default function App() {
               <button 
                 type="submit"
                 disabled={authLoading}
-                className="w-full py-5 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-[0_10px_30px_rgba(255,255,255,0.1)] flex items-center justify-center gap-3 disabled:opacity-50"
+                className="w-full py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-[0_10px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_30px_rgba(255,255,255,0.1)] flex items-center justify-center gap-3 disabled:opacity-50"
               >
-                {authLoading ? 'جاري التحميل...' : (authMode === 'login' ? 'تسجيل الدخول' : 'إنشاء الحساب')}
+                {authLoading ? t.loading_dots : (authMode === 'login' ? t.login_tab : t.signup_tab)}
               </button>
             </form>
 
             <div className="relative">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/5"></div></div>
-              <div className="relative flex justify-center text-[10px] font-black uppercase"><span className="bg-zinc-900 px-4 text-zinc-500">مرحباً بك</span></div>
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-black/5 dark:border-white/5"></div></div>
+              <div className="relative flex justify-center text-[10px] font-black uppercase"><span className="bg-white dark:bg-zinc-900 px-4 text-zinc-500">{t.welcome_back_motto}</span></div>
             </div>
           </div>
         </motion.div>
@@ -488,23 +636,23 @@ export default function App() {
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative p-8 rounded-[3rem] overflow-hidden group shadow-2xl bg-zinc-900 border border-white/5 active:scale-[0.99] transition-transform duration-500"
+        className="relative p-8 rounded-[3rem] overflow-hidden group shadow-2xl bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 active:scale-[0.99] transition-transform duration-500"
       >
         {/* Animated Background Elements */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full -mr-64 -mt-64 animate-pulse"></div>
-        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/5 blur-[100px] rounded-full -ml-48 -mb-48 group-hover:bg-emerald-500/10 transition-all duration-700"></div>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02),transparent)] opacity-50"></div>
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full -mr-64 -mt-64 animate-pulse pointer-events-none"></div>
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/5 blur-[100px] rounded-full -ml-48 -mb-48 group-hover:bg-emerald-500/10 transition-all duration-700 pointer-events-none"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_50%_50%,rgba(0,0,0,0.02),transparent)] dark:bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02),transparent)] opacity-50 pointer-events-none"></div>
         
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-10">
             <div className="space-y-1 text-right w-full">
               <div className="flex items-center justify-end gap-2 mb-1">
-                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">إجمالي الرصيد</span>
+                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">{t.total_balance}</span>
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
               </div>
-              <h2 className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter text-white drop-shadow-2xl">
-                {currentTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                <span className="text-sm font-medium text-zinc-600 mr-2">{appCurrency}</span>
+              <h2 className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter text-zinc-900 dark:text-white drop-shadow-2xl">
+                {formatAmount(currentTotal, privacyMode)}
+                <span className="text-sm font-medium text-zinc-500 dark:text-zinc-600 mr-2">{displayCurrency}</span>
               </h2>
             </div>
           </div>
@@ -512,54 +660,54 @@ export default function App() {
           <div className="grid grid-cols-2 gap-4 mb-8">
             <motion.div 
               whileHover={{ y: -4 }}
-              className="bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-white/5 space-y-4 hover:bg-white/[0.05] transition-colors"
+              className="bg-zinc-50/50 dark:bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-4 hover:bg-zinc-100 dark:hover:bg-white/[0.05] transition-colors"
             >
               <div className="flex items-center justify-between">
-                <div className="p-2.5 bg-zinc-800 rounded-2xl text-zinc-400">
+                <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 rounded-2xl text-zinc-500 dark:text-zinc-400">
                   <Wallet size={16} />
                 </div>
-                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">الكاش</span>
+                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{t.cash}</span>
               </div>
-              <p className="text-xl font-black tabular-nums text-white truncate">
-                {walletBalances.cash.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                <span className="text-[10px] font-bold text-zinc-600 mr-1.5">{appCurrency}</span>
+              <p className="text-xl font-black tabular-nums text-zinc-900 dark:text-white truncate">
+                {formatAmount(walletBalances.cash, privacyMode)}
+                <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-600 mr-1.5">{displayCurrency}</span>
               </p>
             </motion.div>
 
             <motion.div 
               whileHover={{ y: -4 }}
-              className="bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-white/5 space-y-4 hover:bg-white/[0.05] transition-colors"
+              className="bg-zinc-50/50 dark:bg-white/[0.03] backdrop-blur-3xl p-5 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-4 hover:bg-zinc-100 dark:hover:bg-white/[0.05] transition-colors"
             >
               <div className="flex items-center justify-between">
-                <div className="p-2.5 bg-zinc-800 rounded-2xl text-zinc-400">
+                <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 rounded-2xl text-zinc-500 dark:text-zinc-400">
                   <Smartphone size={16} />
                 </div>
-                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">الصرافة</span>
+                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{t.bank}</span>
               </div>
-              <p className="text-xl font-black tabular-nums text-white truncate">
-                {walletBalances.bank.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                <span className="text-[10px] font-bold text-zinc-600 mr-1.5">{appCurrency}</span>
+              <p className="text-xl font-black tabular-nums text-zinc-900 dark:text-white truncate">
+                {formatAmount(walletBalances.bank, privacyMode)}
+                <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-600 mr-1.5">{displayCurrency}</span>
               </p>
             </motion.div>
           </div>
 
-          <div className="pt-8 border-t border-white/5 flex gap-12 justify-center">
+          <div className="pt-8 border-t border-black/5 dark:border-white/5 flex gap-12 justify-center">
             <div className="group cursor-help">
-              <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                <div className="w-6 h-6 rounded-xl bg-emerald-400/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowDownLeft size={12} /></div>
-                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">دخل</span>
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 mb-1">
+                <div className="w-6 h-6 rounded-xl bg-emerald-500/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowDownLeft size={12} /></div>
+                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">{t.income}</span>
               </div>
-              <p className="text-lg font-black text-white">{totalIncome.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} <span className="text-[10px] text-zinc-600 font-bold">{appCurrency}</span></p>
+              <p className="text-lg font-black text-zinc-900 dark:text-white">{formatAmount(totalIncome, privacyMode)} <span className="text-[10px] text-zinc-500 dark:text-zinc-600 font-bold">{displayCurrency}</span></p>
             </div>
             
-            <div className="w-px h-10 bg-white/5 self-center"></div>
+            <div className="w-px h-10 bg-black/5 dark:bg-white/5 self-center"></div>
 
             <div className="group cursor-help">
-              <div className="flex items-center gap-2 text-rose-400 mb-1">
-                <div className="w-6 h-6 rounded-xl bg-rose-400/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowUpRight size={12} /></div>
-                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">صرف</span>
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 mb-1">
+                <div className="w-6 h-6 rounded-xl bg-rose-500/10 flex items-center justify-center group-hover:scale-110 transition-transform"><ArrowUpRight size={12} /></div>
+                <span className="text-[9px] font-black uppercase tracking-widest opacity-60">{t.expense}</span>
               </div>
-              <p className="text-lg font-black text-white">{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} <span className="text-[10px] text-zinc-600 font-bold">{appCurrency}</span></p>
+              <p className="text-lg font-black text-zinc-900 dark:text-white">{formatAmount(totalExpenses, privacyMode)} <span className="text-[10px] text-zinc-500 dark:text-zinc-600 font-bold">{displayCurrency}</span></p>
             </div>
           </div>
         </div>
@@ -576,8 +724,8 @@ export default function App() {
             <Bell size={20} />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-black text-rose-200 uppercase tracking-tight">تعديت الميزانية!</p>
-            <p className="text-xs text-rose-500/70 font-bold">صرفت أكثر من {userBudget.toLocaleString()} {appCurrency}</p>
+            <p className="text-sm font-black text-rose-200 uppercase tracking-tight">{t.budget_warning}</p>
+            <p className="text-xs text-rose-500/70 font-bold">{t.budget_spent_more} {userBudget.toLocaleString()} {displayCurrency}</p>
           </div>
           <ChevronRight size={16} className="text-rose-500/30" />
         </motion.div>
@@ -587,10 +735,10 @@ export default function App() {
       <div className="space-y-4">
         <div className="flex justify-between items-center group cursor-pointer px-1">
           <div className="flex items-center gap-2">
-            <CreditCard size={18} className="text-indigo-400" />
-            <h2 className="font-black text-zinc-100 uppercase tracking-tighter">الاشتراكات</h2>
+            <CreditCard size={18} className="text-zinc-400 dark:text-zinc-600" />
+            <h2 className="font-black text-zinc-900 dark:text-zinc-100 uppercase tracking-tighter">{t.subscriptions}</h2>
           </div>
-          <button onClick={() => setShowSubscriptionModal({ show: true })} className="text-[10px] font-black text-zinc-500 bg-zinc-900 border border-white/5 py-1 px-3 rounded-full hover:border-white/20 transition-all uppercase tracking-widest">إدارة</button>
+          <button onClick={() => setShowSubscriptionModal({ show: true })} className="text-[10px] font-black text-zinc-500 bg-zinc-100 dark:bg-zinc-900 border border-black/5 dark:border-white/5 py-1 px-3 rounded-full hover:border-zinc-200 dark:hover:border-white/20 transition-all uppercase tracking-widest">{t.manage}</button>
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide px-1 -mx-1 snap-x">
           {subscriptions.length > 0 ? subscriptions.map((s) => (
@@ -598,22 +746,22 @@ export default function App() {
               key={s.id}
               whileTap={{ scale: 0.95 }}
               onClick={() => setShowSubscriptionModal({ show: true, sub: s })}
-              className="min-w-[160px] snap-center glass p-5 rounded-[2rem] space-y-4 cursor-pointer hover:border-white/20 transition-all"
+              className="min-w-[160px] snap-center glass p-5 rounded-[2rem] space-y-4 cursor-pointer hover:border-black/10 dark:hover:border-white/20 transition-all"
             >
-              <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center text-zinc-100 font-bold text-lg shadow-inner">{s.name[0]}</div>
+              <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-900 dark:text-zinc-100 font-bold text-lg shadow-inner">{s.name[0]}</div>
               <div>
-                <p className="text-sm font-black">{s.name}</p>
-                <p className="text-[10px] text-zinc-500 font-bold">كل شهر</p>
+                <p className="text-sm font-black text-zinc-900 dark:text-white">{s.name}</p>
+                <p className="text-[10px] text-zinc-500 font-bold">{t.every_month}</p>
               </div>
               <div className="pt-2 flex justify-between items-end">
-                <span className="text-sm font-black">{s.amount.toFixed(0)} <span className="text-[9px] opacity-40 font-bold uppercase">{appCurrency}</span></span>
-                <span className="text-[9px] font-black text-indigo-400 bg-indigo-400/10 px-2 py-0.5 rounded-md">يوم {new Date(s.nextBillingDate).getDate()}</span>
+                <span className="text-sm font-black text-zinc-900 dark:text-white">{formatAmount(s.amount, privacyMode)} <span className="text-[9px] opacity-40 font-bold uppercase">{displayCurrency}</span></span>
+                <span className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 dark:bg-indigo-400/10 px-2 py-0.5 rounded-md">{t.day} {new Date(s.nextBillingDate).getDate()}</span>
               </div>
             </motion.div>
           )) : (
             <div className="w-full glass p-8 rounded-[2rem] text-center space-y-3">
-              <div className="w-12 h-12 bg-zinc-950 rounded-2xl flex items-center justify-center mx-auto text-zinc-800 shadow-inner"><CreditCard size={20} /></div>
-              <p className="text-xs text-zinc-500 font-bold">لا توجد اشتراكات مجدولة</p>
+              <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-950 rounded-2xl flex items-center justify-center mx-auto text-zinc-400 dark:text-zinc-800 shadow-inner"><CreditCard size={20} /></div>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 font-bold">{t.no_subscriptions}</p>
             </div>
           )}
         </div>
@@ -623,57 +771,57 @@ export default function App() {
       <div className="space-y-6 pb-12">
         <div className="flex justify-between items-center group px-1">
           <div className="flex items-center gap-2">
-            <div className="p-2 bg-zinc-900 rounded-lg text-zinc-500 border border-white/5">
+            <div className="p-2 bg-zinc-100 dark:bg-zinc-900 rounded-lg text-zinc-500 border border-black/5 dark:border-white/5">
               <ArrowRightLeft size={14} />
             </div>
-            <h2 className="font-black text-white uppercase tracking-tighter text-lg">العمليات الأخيرة</h2>
+            <h2 className="font-black text-zinc-900 dark:text-white uppercase tracking-tighter text-lg">{t.recent_transactions}</h2>
           </div>
           <button 
             onClick={() => setShowAllTransactions(true)} 
-            className="text-[9px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-900/50 px-3 py-1.5 rounded-full border border-white/5 hover:border-white/10 active:bg-zinc-800 transition-all"
+            className="text-[9px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-100/50 dark:bg-zinc-900/50 px-3 py-1.5 rounded-full border border-black/5 dark:border-white/5 hover:border-zinc-200 dark:hover:border-white/10 active:bg-zinc-200 dark:active:bg-zinc-800 transition-all"
           >
-            عرض الكل
+            {t.view_all}
           </button>
         </div>
         <div className="space-y-4">
-          {transactions.length > 0 ? transactions.slice(0, 5).map((t, i) => {
-            const category = CATEGORIES[t.category];
-            const isExpense = t.type === 'expense';
+        {transactions.length > 0 ? transactions.slice(0, 5).map((tx, i) => {
+            const category = CATEGORIES[tx.category];
+            const isExpense = tx.type === 'expense';
             return (
               <motion.div 
                 layout
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.05 }}
-                key={t.id}
-                className="bg-white/[0.02] backdrop-blur-3xl p-4 rounded-[2rem] flex items-center gap-4 hover:bg-white/[0.04] transition-all border border-white/5 group"
+                key={tx.id}
+                className="bg-white dark:bg-white/[0.02] backdrop-blur-3xl p-4 rounded-[2rem] flex items-center gap-4 hover:bg-zinc-100 dark:hover:bg-white/[0.04] transition-all border border-black/5 dark:border-white/5 group shadow-sm"
               >
                 <div className={`w-14 h-14 rounded-[1.25rem] ${category.color} flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300 relative overflow-hidden`}>
                    <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                    <category.icon size={24} className="relative z-10" />
                 </div>
-                <div className="flex-1 min-w-0 text-right">
-                  <p className="font-black text-sm text-white truncate mb-0.5 tracking-tight">{t.description}</p>
-                  <div className="flex items-center justify-end gap-2 text-zinc-500">
-                    <span className="text-[9px] font-bold uppercase tracking-wider">{WALLET_LABELS[t.wallet]}</span>
-                    <div className="w-1 h-1 rounded-full bg-zinc-800"></div>
-                    <span className="text-[9px] font-bold uppercase tracking-wider">{new Date(t.date).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })}</span>
+                <div className={`flex-1 min-w-0 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                  <p className="font-black text-sm text-zinc-900 dark:text-white truncate mb-0.5 tracking-tight">{tx.description}</p>
+                  <div className="flex items-center justify-end gap-2 text-zinc-400 dark:text-zinc-500">
+                    <span className="text-[9px] font-bold uppercase tracking-wider">{t[WALLET_LABELS[tx.wallet]]}</span>
+                    <div className="w-1 h-1 rounded-full bg-zinc-200 dark:bg-zinc-800"></div>
+                    <span className="text-[9px] font-bold uppercase tracking-wider">{new Date(tx.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { month: 'short', day: 'numeric' })}</span>
                   </div>
                 </div>
-                <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-white' : 'text-emerald-400'} pr-1`}>
+                <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-zinc-900 dark:text-white' : 'text-emerald-600 dark:text-emerald-400'} pr-1`}>
                   <span className="text-xs opacity-50 ml-1">{isExpense ? '-' : '+'}</span>
-                  {t.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                  {formatAmount(tx.amount, privacyMode)}
                 </div>
               </motion.div>
             );
           }) : (
-            <div className="text-center py-16 bg-white/[0.02] rounded-[3rem] border border-dashed border-white/5 space-y-4">
-              <div className="w-20 h-20 bg-zinc-950 rounded-[2.5rem] flex items-center justify-center mx-auto text-zinc-900 shadow-inner group">
+            <div className="text-center py-16 bg-zinc-100/50 dark:bg-white/[0.02] rounded-[3rem] border border-dashed border-black/10 dark:border-white/5 space-y-4">
+              <div className="w-20 h-20 bg-white dark:bg-zinc-950 rounded-[2.5rem] flex items-center justify-center mx-auto text-zinc-300 dark:text-zinc-900 shadow-inner group border border-black/5 dark:border-transparent">
                 <LayoutDashboard size={40} className="group-hover:scale-110 transition-transform" />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-black text-zinc-500 uppercase tracking-tight">لا توجد عمليات مسجلة</p>
-                <p className="text-[10px] text-zinc-700 font-bold uppercase tracking-widest">سجل أول عملية لك الآن</p>
+                <p className="text-sm font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-tight">{t.no_transactions}</p>
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-700 font-bold uppercase tracking-widest">{t.start_first_tx}</p>
               </div>
             </div>
           )}
@@ -683,7 +831,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen pb-24 font-sans bg-zinc-950 text-zinc-100" dir="rtl">
+    <div className="min-h-screen pb-24 font-sans bg-zinc-50 dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100" dir={language === 'ar' ? 'rtl' : 'ltr'}>
       {/* Tutorial Overlay */}
       <AnimatePresence>
         {showTutorial && (
@@ -696,8 +844,8 @@ export default function App() {
                   // Send welcome notification
                   await api.addNotification({
                     id: crypto.randomUUID(),
-                    title: "أهلاً بك في مصاريفي! 🌟",
-                    message: "يسعدنا انضمامك إلينا. الآن يمكنك البدء بتنظيم ميزانيتك ومتابعة مصروفاتك بكل سهولة.",
+                    title: t.welcome_notif_title,
+                    message: t.welcome_notif_desc,
                     date: new Date().toISOString(),
                     userId: user.id
                   });
@@ -712,6 +860,7 @@ export default function App() {
               }
               setShowTutorial(false);
             }} 
+            t={t}
           />
         )}
         {showNotificationsModal && (
@@ -728,18 +877,24 @@ export default function App() {
               await api.deleteNotification(id);
               refreshData();
             }}
+            language={language}
+            t={t}
           />
         )}
         {showAdminPanel && (
           <AdminPanel 
             onClose={() => setShowAdminPanel(false)}
+            language={language}
+            t={t}
           />
         )}
       </AnimatePresence>
 
-      <header className="px-6 py-10 flex justify-between items-center sticky top-0 z-40 bg-zinc-950/60 backdrop-blur-3xl border-b border-white/5 safe-top">
+      <header className="px-6 py-10 flex justify-between items-center sticky top-0 z-40 bg-zinc-50/60 dark:bg-zinc-950/60 backdrop-blur-3xl border-b border-black/5 dark:border-white/5 safe-top">
         <div className="space-y-0.5">
-          <h1 className="text-3xl font-black text-white tracking-tighter uppercase leading-tight italic">مصاريفي</h1>
+          <h1 className="text-3xl font-black text-zinc-900 dark:text-white tracking-tighter uppercase leading-tight italic">
+            {t.msarify}
+          </h1>
           <div className="flex items-center gap-2 pr-1">
             <div className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
             <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em]">{user.displayName}</p>
@@ -749,19 +904,28 @@ export default function App() {
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            onClick={togglePrivacyMode}
+            title={t.privacy_mode}
+            className="p-3 bg-zinc-200 dark:bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-500 dark:text-zinc-400 border border-black/5 dark:border-white/10 transition-all hover:bg-zinc-300 dark:hover:bg-white/[0.07] hover:text-zinc-900 dark:hover:text-white"
+          >
+            {privacyMode ? <EyeOff size={20} /> : <Eye size={20} />}
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => setShowNotificationsModal(true)}
-            className="p-3 bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-400 relative border border-white/10 transition-all hover:bg-white/[0.07] hover:text-white"
+            className="p-3 bg-zinc-200 dark:bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-500 dark:text-zinc-400 relative border border-black/5 dark:border-white/10 transition-all hover:bg-zinc-300 dark:hover:bg-white/[0.07] hover:text-zinc-900 dark:hover:text-white"
           >
             <Bell size={20} />
             {notifications.filter(n => !n.isRead).length > 0 && (
-              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-zinc-950"></span>
+              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-zinc-50 dark:border-zinc-950"></span>
             )}
           </motion.button>
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={handleLogout}
-            className="p-3 bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-400 border border-white/10 transition-all hover:bg-white/[0.07] hover:text-rose-400"
+            className="p-3 bg-zinc-200 dark:bg-white/[0.03] backdrop-blur-3xl rounded-2xl text-zinc-500 dark:text-zinc-400 border border-black/5 dark:border-white/10 transition-all hover:bg-zinc-300 dark:hover:bg-white/[0.07] hover:text-rose-400"
           >
             <LogOut size={20} />
           </motion.button>
@@ -773,17 +937,18 @@ export default function App() {
 
         {activeTab === 'analysis' && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
-            <h2 className="text-2xl font-bold px-1 text-white">تحليل ميزانيتك</h2>
+            <h2 className="text-2xl font-bold px-1 text-zinc-900 dark:text-white">{t.analysis}</h2>
             
-            <div className="aspect-square bg-zinc-900 rounded-[3rem] p-8 shadow-2xl flex flex-col items-center justify-center border border-white/5 relative overflow-hidden">
-               <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-white/0 via-white/5 to-white/0"></div>
+            <div className="aspect-square bg-white dark:bg-zinc-900 rounded-[3rem] p-8 shadow-2xl flex flex-col items-center justify-center border border-black/5 dark:border-white/5 relative overflow-hidden">
+               <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-black/0 via-black/5 to-black/0 dark:from-white/0 dark:via-white/5 dark:to-white/0"></div>
                <ResponsiveContainer width="100%" height="80%">
                  <RechartsPieChart>
-                  <Pie
-                    data={transactions.filter(t => t.type === 'expense').reduce((acc, curr) => {
-                      const idx = acc.findIndex(i => i.name === CATEGORIES[curr.category].label);
+                   <Pie
+                    data={transactions.filter(tx => tx.type === 'expense').reduce((acc, curr) => {
+                      const translatedName = t[CATEGORIES[curr.category].label] || curr.category;
+                      const idx = acc.findIndex(i => i.name === translatedName);
                       if (idx > -1) acc[idx].value += curr.amount;
-                      else acc.push({ name: CATEGORIES[curr.category].label, value: curr.amount });
+                      else acc.push({ name: translatedName, value: curr.amount });
                       return acc;
                     }, [] as { name: string, value: number }[])}
                     cx="50%"
@@ -795,31 +960,39 @@ export default function App() {
                     stroke="none"
                   >
                     {transactions.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={['#ffffff', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 7]} cornerRadius={12} />
+                      <Cell key={`cell-${index}`} fill={['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 7]} cornerRadius={12} />
                     ))}
                   </Pie>
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#18181b', borderRadius: '24px', border: '1px solid rgba(255,255,255,0.1)', direction: 'rtl', color: '#fff' }}
-                    itemStyle={{ color: '#fff' }}
+                    contentStyle={{ 
+                      backgroundColor: theme === 'dark' ? '#18181b' : '#fff', 
+                      borderRadius: '24px', 
+                      border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(0,0,0,0.05)', 
+                      direction: language === 'ar' ? 'rtl' : 'ltr', 
+                      textAlign: language === 'ar' ? 'right' : 'left',
+                      color: theme === 'dark' ? '#fff' : '#18181b',
+                      boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
+                    }}
+                    itemStyle={{ color: theme === 'dark' ? '#fff' : '#18181b' }}
                   />
                 </RechartsPieChart>
               </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-4">
-                  <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">إجمالي المصروف</p>
-                  <p className="text-base sm:text-lg font-black text-white text-center break-words max-w-[100px]">
-                    {totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                    <span className="text-[9px] opacity-40 mr-1">{appCurrency}</span>
+                  <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{t.total_expense}</p>
+                  <p className="text-base sm:text-lg font-black text-zinc-900 dark:text-white text-center break-words max-w-[100px]">
+                    {formatAmount(totalExpenses, privacyMode)}
+                    <span className="text-[9px] opacity-40 mr-1">{displayCurrency}</span>
                   </p>
                 </div>
             </div>
             
-            <div className="bg-zinc-900 rounded-[3rem] p-8 border border-white/5 space-y-6">
+            <div className="bg-white dark:bg-zinc-900 rounded-[3rem] p-8 border border-black/5 dark:border-white/5 space-y-6 shadow-xl">
               <div className="px-2">
-                <h3 className="text-lg font-black text-white">تحركات الميزانية</h3>
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">آخر 6 أشهر</p>
+                <h3 className="text-lg font-black text-zinc-900 dark:text-white">{t.analysis_budget_moves}</h3>
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">{t.last_6_months}</p>
               </div>
               
-              <div className="h-64 w-full">
+              <div className={`h-64 w-full ${privacyMode ? 'blur-xl pointer-events-none select-none' : ''}`}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={trendData}>
                     <defs>
@@ -832,7 +1005,7 @@ export default function App() {
                         <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
                     <XAxis 
                       dataKey="month" 
                       axisLine={false} 
@@ -842,8 +1015,16 @@ export default function App() {
                     />
                     <YAxis hide />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#18181b', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.1)', direction: 'rtl' }}
-                      itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                      contentStyle={{ 
+                        backgroundColor: theme === 'dark' ? '#18181b' : '#fff', 
+                        borderRadius: '20px', 
+                        border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(0,0,0,0.05)', 
+                        direction: language === 'ar' ? 'rtl' : 'ltr',
+                        textAlign: language === 'ar' ? 'right' : 'left',
+                        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
+                      }}
+                      itemStyle={{ fontSize: '12px', fontWeight: 'bold', color: theme === 'dark' ? '#fff' : '#18181b' }}
+                      formatter={(val: any) => [formatAmount(val, privacyMode) + ` ${displayCurrency}`, '']}
                     />
                     <Area 
                       type="monotone" 
@@ -852,7 +1033,7 @@ export default function App() {
                       strokeWidth={3}
                       fillOpacity={1} 
                       fill="url(#colorIncome)" 
-                      name="الدخل"
+                      name={t.income}
                     />
                     <Area 
                       type="monotone" 
@@ -861,7 +1042,7 @@ export default function App() {
                       strokeWidth={3}
                       fillOpacity={1} 
                       fill="url(#colorExpense)" 
-                      name="المصروف"
+                      name={t.expense}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -870,25 +1051,25 @@ export default function App() {
               <div className="flex justify-center gap-6 mt-4">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/50"></div>
-                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">الدخل</span>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{t.income}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-rose-500 shadow-lg shadow-rose-500/50"></div>
-                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">المصروف</span>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{t.expense}</span>
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-5">
-               <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 shadow-sm">
-                  <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-xl flex items-center justify-center mb-4"><ArrowDownLeft size={20} /></div>
-                  <p className="text-xs font-bold text-zinc-500 uppercase">الضروريات</p>
-                  <p className="text-2xl font-black text-white mt-1">{necessityPct}%</p>
+               <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 shadow-sm">
+                  <div className="w-10 h-10 bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 rounded-xl flex items-center justify-center mb-4"><ArrowDownLeft size={20} /></div>
+                  <p className="text-xs font-bold text-zinc-500 uppercase">{t.necessities}</p>
+                  <p className="text-2xl font-black text-zinc-900 dark:text-white mt-1">{necessityPct}%</p>
                </div>
-               <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 shadow-sm">
-                  <div className="w-10 h-10 bg-rose-500/10 text-rose-500 rounded-xl flex items-center justify-center mb-4"><ArrowUpRight size={20} /></div>
-                  <p className="text-xs font-bold text-zinc-500 uppercase">الكماليات</p>
-                  <p className="text-2xl font-black text-white mt-1">{luxuryPct}%</p>
+               <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 shadow-sm">
+                  <div className="w-10 h-10 bg-rose-500/10 text-rose-600 dark:text-rose-500 rounded-xl flex items-center justify-center mb-4"><ArrowUpRight size={20} /></div>
+                  <p className="text-xs font-bold text-zinc-500 uppercase">{t.luxuries}</p>
+                  <p className="text-2xl font-black text-zinc-900 dark:text-white mt-1">{luxuryPct}%</p>
                </div>
             </div>
           </div>
@@ -896,28 +1077,28 @@ export default function App() {
 
         {activeTab === 'funds' && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 pb-20 px-1">
-            <h2 className="text-2xl font-bold text-white">صناديق الادخار والطوارئ</h2>
+            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">{t.funds}</h2>
             
             <div className="grid gap-6">
               <motion.div 
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => setShowFundModal(true)}
-                className="bg-zinc-900 p-8 rounded-[3rem] border border-amber-500/20 relative overflow-hidden group cursor-pointer"
+                className="bg-white dark:bg-zinc-900 p-8 rounded-[3rem] border border-amber-500/10 dark:border-amber-500/20 relative overflow-hidden group cursor-pointer shadow-xl shadow-amber-500/[0.02]"
               >
-                <div className="absolute top-0 right-0 p-8 text-amber-500/10 group-hover:text-amber-500/20 transition-colors">
+                <div className="absolute top-0 right-0 p-8 text-amber-500/5 dark:text-amber-500/10 group-hover:text-amber-500/10 dark:group-hover:text-amber-500/20 transition-colors pointer-events-none">
                   <Shield size={120} />
                 </div>
                 <div className="relative z-10 space-y-4">
-                  <div className="w-12 h-12 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center">
+                  <div className="w-12 h-12 bg-amber-500/10 text-amber-600 dark:text-amber-500 rounded-2xl flex items-center justify-center">
                     <Shield size={24} />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-white">صندوق الطوارئ</h3>
-                    <p className="text-xs text-zinc-500">مخصص للحالات المفاجئة والطارئة</p>
+                    <h3 className="text-lg font-black text-zinc-900 dark:text-white">{t.emergency_fund}</h3>
+                    <p className="text-xs text-zinc-500">{t.emergency_desc}</p>
                   </div>
-                  <p className="text-4xl font-black text-white tabular-nums">
-                    {walletBalances.emergency.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
+                  <p className="text-4xl font-black text-zinc-900 dark:text-white tabular-nums">
+                    {formatAmount(walletBalances.emergency, privacyMode)} <span className="text-sm font-bold text-zinc-500">{displayCurrency}</span>
                   </p>
                 </div>
               </motion.div>
@@ -926,21 +1107,21 @@ export default function App() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => setShowFundModal(true)}
-                className="bg-zinc-900 p-8 rounded-[3rem] border border-indigo-500/20 relative overflow-hidden group cursor-pointer"
+                className="bg-white dark:bg-zinc-900 p-8 rounded-[3rem] border border-indigo-500/10 dark:border-indigo-500/20 relative overflow-hidden group cursor-pointer shadow-xl shadow-indigo-500/[0.02]"
               >
-                <div className="absolute top-0 right-0 p-8 text-indigo-500/10 group-hover:text-indigo-500/20 transition-colors">
+                <div className="absolute top-0 right-0 p-8 text-indigo-500/5 dark:text-indigo-500/10 group-hover:text-indigo-500/10 dark:group-hover:text-indigo-500/20 transition-colors pointer-events-none">
                   <TrendingUp size={120} />
                 </div>
                 <div className="relative z-10 space-y-4">
-                  <div className="w-12 h-12 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center">
+                  <div className="w-12 h-12 bg-indigo-500/10 text-indigo-600 dark:text-indigo-500 rounded-2xl flex items-center justify-center">
                     <TrendingUp size={24} />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-white">صندوق الادخار</h3>
-                    <p className="text-xs text-zinc-500">مخصص لخططك وأهدافك المستقبلية</p>
+                    <h3 className="text-lg font-black text-zinc-900 dark:text-white">{t.savings_fund}</h3>
+                    <p className="text-xs text-zinc-500">{t.savings_desc}</p>
                   </div>
-                  <p className="text-4xl font-black text-white tabular-nums">
-                    {walletBalances.savings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-bold text-zinc-500">{appCurrency}</span>
+                  <p className="text-4xl font-black text-zinc-900 dark:text-white tabular-nums">
+                    {formatAmount(walletBalances.savings, privacyMode)} <span className="text-sm font-bold text-zinc-500">{displayCurrency}</span>
                   </p>
                 </div>
               </motion.div>
@@ -949,262 +1130,317 @@ export default function App() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 pb-20">
-            <h2 className="text-2xl font-bold px-1 text-white">الإعدادات</h2>
-            
-            {!!user?.isAdmin && (
-              <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-[2.5rem] space-y-4">
-                <div className="p-4 space-y-2">
-                  <h3 className="text-lg font-black text-emerald-500">لوحة الإدارة</h3>
-                  <p className="text-xs text-zinc-500 leading-relaxed text-emerald-500/70">لديك صلاحيات المشرف. يمكنك إدارة المستخدمين وإرسال تنبيهات عامة من هنا.</p>
+          <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 pb-32">
+            {/* Profile Header */}
+            <div className="relative px-2 pt-4">
+              <div className="flex items-center gap-6">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-[2.5rem] bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-3xl font-black text-white shadow-2xl shadow-indigo-500/20">
+                    {user?.displayName?.[0] || 'U'}
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 border-4 border-white dark:border-zinc-950 rounded-full shadow-lg"></div>
                 </div>
-                
-                <button 
-                  onClick={() => setShowAdminPanel(true)}
-                  className="w-full bg-emerald-500 text-white py-6 rounded-[2rem] font-black text-lg flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl shadow-emerald-500/20"
-                >
-                  <Shield size={24} />
-                  فتح لوحة الإدارة
-                </button>
+                <div className="space-y-0.5">
+                  <h2 className="text-2xl font-black text-zinc-900 dark:text-white tracking-tight italic">{user?.displayName}</h2>
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-600 font-black uppercase tracking-[0.25em]">{user?.email}</p>
+                </div>
               </div>
-            )}
-
-            <div className="bg-zinc-900 rounded-[2.5rem] p-4 border border-white/5 space-y-4">
-              <div className="p-6 space-y-2">
-                <h3 className="text-lg font-black text-white">إدارة أرصدتك وعملتك</h3>
-                <p className="text-xs text-zinc-500 leading-relaxed">قم بتعديل أرصدة الكاش والبنك، وتحديث مبالغ الصناديق، أو تغيير العملة الافتراضية للتطبيق.</p>
-              </div>
-              
-              <button 
-                onClick={() => setShowMasterBalanceModal(true)}
-                className="w-full bg-white text-zinc-950 py-6 rounded-[2rem] font-black text-lg flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl"
-              >
-                <CreditCard size={24} />
-                تعديل الأرصدة والعملة
-              </button>
             </div>
 
-            <button 
-              onClick={() => setShowTutorial(true)}
-              className="w-full flex items-center justify-center gap-4 p-8 bg-zinc-900 rounded-[3rem] border border-white/5 hover:border-amber-500/30 transition-all group overflow-hidden relative active:scale-95 shadow-xl"
-            >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
-              <div className="p-4 bg-amber-500/10 rounded-2xl text-amber-400 group-hover:scale-110 transition-transform">
-                <Info size={32} />
+            {/* Appearance Section */}
+            <section className="space-y-4">
+              <div className="flex items-center gap-2 px-1 text-zinc-500 dark:text-zinc-700 uppercase tracking-widest text-[10px] font-black">
+                <Palette size={12} />
+                <h3>{t.appearance}</h3>
               </div>
-              <div className="flex-1 text-right">
-                <h4 className="font-black text-white text-lg">تعليمات الاستخدام</h4>
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">شرح شامل لمزايا التطبيق</p>
+              <div className="bg-zinc-100 dark:bg-white/[0.02] backdrop-blur-3xl rounded-[2.5rem] border border-zinc-200 dark:border-white/5 p-2 flex relative">
+                <div className="absolute inset-2 flex pointer-events-none">
+                  <motion.div 
+                    animate={{ 
+                      x: theme === 'light' 
+                        ? (language === 'ar' ? '-100%' : '100%') 
+                        : '0%' 
+                    }}
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                    className="h-full w-1/2 bg-white dark:bg-white/10 rounded-3xl shadow-xl border border-black/5 dark:border-white/10"
+                  />
+                </div>
+                <button 
+                  onClick={() => updateSettings({ theme: 'dark' })}
+                  className={`flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-500 font-black uppercase tracking-widest text-xs ${theme === 'dark' ? 'text-zinc-950 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-900'}`}
+                >
+                  <Moon size={18} strokeWidth={theme === 'dark' ? 2.5 : 2} />
+                  <span className="mt-0.5">{t.dark}</span>
+                </button>
+                <button 
+                  onClick={() => updateSettings({ theme: 'light' })}
+                  className={`flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-500 font-black uppercase tracking-widest text-xs ${theme === 'light' ? 'text-zinc-950 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-900'}`}
+                >
+                  <Sun size={18} strokeWidth={theme === 'light' ? 2.5 : 2} />
+                  <span className="mt-0.5">{t.light}</span>
+                </button>
               </div>
-              <div className="p-3 bg-zinc-800 rounded-xl text-zinc-600">
-                <ChevronRight size={20} />
-              </div>
-            </button>
+            </section>
 
-            <button 
-              onClick={() => setShowInstallGuide(true)}
-              className="w-full flex items-center justify-center gap-4 p-8 bg-zinc-900 rounded-[3rem] border border-white/5 hover:border-blue-500/30 transition-all group overflow-hidden relative active:scale-95 shadow-xl"
-            >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
-              <div className="p-4 bg-blue-500/10 rounded-2xl text-blue-400 group-hover:scale-110 transition-transform">
-                <Smartphone size={32} />
+            {/* Localization Bento Box */}
+            <div className="grid grid-cols-1 gap-4">
+              <div className="bg-zinc-100 dark:bg-white/[0.02] backdrop-blur-3xl rounded-[3rem] border border-zinc-200 dark:border-white/5 p-8 flex flex-col gap-8 relative overflow-hidden group">
+                 <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white dark:bg-zinc-900 rounded-2xl flex items-center justify-center text-zinc-400 border border-zinc-200 dark:border-white/5">
+                        <Languages size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-zinc-900 dark:text-white italic tracking-tighter">{t.language}</p>
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-600 font-bold uppercase tracking-widest">{language === 'ar' ? 'العربية' : 'English'}</p>
+                </div>
               </div>
-              <div className="flex-1 text-right">
-                <h4 className="font-black text-white text-lg">تثبيت التطبيق على الآيفون</h4>
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">دليل الخطوات لسهولة الوصول</p>
+              <div className="flex bg-white dark:bg-zinc-950/80 p-1.5 rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm relative z-10">
+                <button 
+                   onClick={() => updateSettings({ language: 'ar' })}
+                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all relative z-10 ${language === 'ar' ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-lg' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-900'}`}
+                >
+                  {language === 'ar' ? 'عربي' : 'AR'}
+                </button>
+                <button 
+                   onClick={() => updateSettings({ language: 'en' })}
+                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all relative z-10 ${language === 'en' ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-lg' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-900'}`}
+                >
+                  {language === 'ar' ? 'إنجليزي' : 'EN'}
+                </button>
               </div>
-              <div className="p-3 bg-zinc-800 rounded-xl text-zinc-600">
-                <ChevronRight size={20} />
-              </div>
-            </button>
+                 </div>
 
-            {/* Siri Integration Section */}
-            <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6 overflow-hidden relative group overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl -translate-y-12 translate-x-12"></div>
-              <div className="flex items-center justify-between">
+                 <div className="h-px bg-zinc-200 dark:bg-white/5 mx-2"></div>
+
+                 <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white dark:bg-zinc-900 rounded-2xl flex items-center justify-center text-zinc-400 border border-zinc-200 dark:border-white/5">
+                        <CreditCard size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-zinc-900 dark:text-white italic tracking-tighter">{t.currency}</p>
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-600 font-bold uppercase tracking-widest">{displayCurrency}</p>
+                      </div>
+                    </div>
+                    <motion.button 
+                      whileHover={{ scale: 1.1, rotate: 15 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => setShowMasterBalanceModal(true)}
+                      className="w-12 h-12 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl flex items-center justify-center shadow-xl"
+                    >
+                      <Plus size={20} strokeWidth={3} />
+                    </motion.button>
+                 </div>
+              </div>
+            </div>
+
+            {/* Siri Card */}
+            <section className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-[3rem] p-8 space-y-6 relative overflow-hidden group shadow-2xl shadow-indigo-500/20 active:scale-[0.98] transition-transform">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-[80px] -translate-y-20 translate-x-20 pointer-events-none"></div>
+              <div className="flex items-center gap-4 relative z-10">
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-[1.5rem] flex items-center justify-center text-white border border-white/20">
+                  <Smartphone size={28} />
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-black text-white text-lg tracking-tighter italic leading-tight">{t.siri}</h4>
+                  <p className="text-[10px] text-white/50 font-black uppercase tracking-[0.2em]">{t.siri_desc}</p>
+                </div>
+              </div>
+
+              <div className="p-6 bg-black/20 backdrop-blur-3xl rounded-[2rem] border border-white/10 space-y-4 relative z-10 shadow-inner">
+                <p className="text-[9px] text-white/40 font-black uppercase tracking-[0.3em] text-center">{t.siri_key}</p>
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-400 border border-blue-500/10">
-                    <Smartphone size={20} />
+                  <div className="flex-1 bg-black/20 py-4 px-4 rounded-xl text-center font-mono text-[10px] text-indigo-200 border border-white/5 truncate">
+                    {user?.siriToken || t.no_key}
                   </div>
-                  <div>
-                    <h3 className="font-black text-white text-sm">تكامل سيري (Siri)</h3>
-                    <p className="text-[10px] text-blue-500/50 font-bold uppercase tracking-wider">الإدخال الصوتي السريع</p>
-                  </div>
+                  {user?.siriToken && (
+                    <motion.button 
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(user.siriToken);
+                        alert(t.copy_success);
+                      }}
+                      className="w-12 h-12 bg-white text-zinc-950 rounded-xl flex items-center justify-center shadow-2xl"
+                    >
+                      <CreditCard size={18} />
+                    </motion.button>
+                  )}
                 </div>
               </div>
-              <div className="space-y-4 relative z-10">
-                <div className="p-5 bg-zinc-950 rounded-[1.5rem] border border-white/5 space-y-3">
-                  <p className="text-[10px] text-zinc-500 font-bold text-center">مفتاح الوصول الخاص بسيري</p>
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="text" 
-                      readOnly 
-                      value={user?.siriToken || "لم يتم إنشاء مفتاح بعد"} 
-                      className="flex-1 bg-transparent text-center font-mono text-xs text-blue-400 outline-none"
-                    />
-                    {user?.siriToken && (
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(user.siriToken);
-                          alert("تم نسخ المفتاح!");
-                        }}
-                        className="p-2 bg-zinc-900 rounded-lg text-zinc-500 hover:text-white transition-colors"
-                      >
-                        <CreditCard size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <button 
-                  onClick={async () => {
-                    try {
-                      const res = await fetch('/api/user/siri-token', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-                      });
-                      const data = await res.json();
-                      if (data.siriToken) {
-                        setUser({ ...user, siriToken: data.siriToken });
-                      }
-                    } catch (err) {
-                      console.error(err);
+
+              <motion.button 
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/user/siri-token', {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                    });
+                    const data = await res.json();
+                    if (data.siriToken) {
+                      setUser({ ...user, siriToken: data.siriToken });
                     }
-                  }}
-                  className="w-full py-5 bg-blue-600 text-white font-black rounded-[2rem] active:scale-95 transition-all text-sm shadow-xl"
-                >
-                  {user?.siriToken ? "تجديد المفتاح السري" : "إنشاء مفتاح الوصول"}
-                </button>
-              </div>
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
+                className="w-full py-5 bg-white text-indigo-600 font-black rounded-[2rem] shadow-2xl relative z-10 transition-all text-sm italic tracking-tight"
+              >
+                {user?.siriToken ? t.renew_key : t.generate_key}
+              </motion.button>
+            </section>
+
+            {/* Help Grid */}
+            <div className="grid grid-cols-2 gap-4">
+               <motion.button 
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setShowTutorial(true)}
+                className="bg-zinc-100 dark:bg-white/[0.02] border border-zinc-200 dark:border-white/5 p-6 rounded-[2.5rem] flex flex-col items-center gap-4 group"
+               >
+                  <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-[1.5rem] flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Info size={28} />
+                  </div>
+                  <span className="text-[10px] font-black text-zinc-900 dark:text-white uppercase tracking-widest">{t.tutorial}</span>
+               </motion.button>
+               <motion.button 
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setShowInstallGuide(true)}
+                className="bg-zinc-100 dark:bg-white/[0.02] border border-zinc-200 dark:border-white/5 p-6 rounded-[2.5rem] flex flex-col items-center gap-4 group"
+               >
+                  <div className="w-16 h-16 bg-blue-500/10 text-blue-400 rounded-[1.5rem] flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Smartphone size={28} />
+                  </div>
+                  <span className="text-[10px] font-black text-zinc-900 dark:text-white uppercase tracking-widest">{t.install_guide}</span>
+               </motion.button>
             </div>
 
-            {/* Password Change Section */}
-            <div className="bg-zinc-900 rounded-[2.5rem] p-8 border border-white/5 space-y-6">
+            {/* Security Section */}
+            <section className="bg-zinc-100 dark:bg-white/[0.02] backdrop-blur-3xl rounded-[3rem] border border-zinc-200 dark:border-white/5 p-8 space-y-8 relative overflow-hidden">
               <div className="flex items-center gap-3">
-                <div className="p-3 bg-zinc-800 rounded-2xl text-zinc-400">
-                  <Lock size={24} />
+                <div className="w-10 h-10 bg-white dark:bg-zinc-900 rounded-xl flex items-center justify-center text-zinc-400">
+                  <Lock size={18} />
                 </div>
-                <div>
-                  <h3 className="text-lg font-black text-white">تغيير كلمة المرور</h3>
-                  <p className="text-xs text-zinc-500">قم بتحديث كلمة مرور حسابك بانتظام</p>
-                </div>
+                <h3 className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-widest">{t.security}</h3>
               </div>
 
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">كلمة المرور الحالية</label>
-                  <input 
-                    type="password"
-                    value={oldPassword}
-                    onChange={(e) => setOldPassword(e.target.value)}
-                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-mono"
-                    placeholder="••••••••"
-                  />
+                <div className="space-y-3">
+                  <div className="relative">
+                    <input 
+                      type="password"
+                      value={oldPassword}
+                      onChange={(e) => setOldPassword(e.target.value)}
+                      className="w-full bg-white dark:bg-zinc-950/50 border border-zinc-200 dark:border-white/5 p-5 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-indigo-500/50 transition-all font-mono text-xs placeholder:text-zinc-300 dark:placeholder:text-zinc-700"
+                      placeholder={t.current_password}
+                    />
+                  </div>
+                  <div className="relative">
+                    <input 
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full bg-white dark:bg-zinc-950/50 border border-zinc-200 dark:border-white/5 p-5 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-indigo-500/50 transition-all font-mono text-xs placeholder:text-zinc-300 dark:placeholder:text-zinc-700"
+                      placeholder={t.new_password}
+                    />
+                  </div>
+                  <motion.button 
+                    whileTap={{ scale: 0.98 }}
+                    onClick={async () => {
+                      if (!oldPassword || !newPassword) return;
+                      setChangingPassword(true);
+                      try {
+                        await api.changePassword(user!.id, oldPassword, newPassword);
+                        setOldPassword('');
+                        setNewPassword('');
+                        alert(t.password_success);
+                      } catch (err: any) {
+                        alert(err.message || t.password_fail);
+                      } finally {
+                        setChangingPassword(false);
+                      }
+                    }}
+                    disabled={changingPassword || !oldPassword || !newPassword}
+                    className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 py-5 rounded-2xl font-black text-xs uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-xl hover:scale-[1.02]"
+                  >
+                    {changingPassword ? t.updating : t.update_password}
+                  </motion.button>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">كلمة المرور الجديدة</label>
-                  <input 
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20 transition-all font-mono"
-                    placeholder="••••••••"
-                  />
+              </div>
+            </section>
+
+            {/* Admin Panel (if applicable) */}
+            {!!user?.isAdmin && (
+              <section className="bg-emerald-500/5 rounded-[3rem] border border-emerald-500/20 p-8 space-y-6 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-[60px] -translate-y-10 translate-x-10 pointer-events-none"></div>
+                <div className="flex items-center gap-4 relative z-10">
+                  <div className="p-3 bg-emerald-500/20 rounded-2xl text-emerald-500 border border-emerald-500/20">
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-zinc-900 dark:text-white italic tracking-tighter">{t.admin_panel}</h4>
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-500/50 font-bold uppercase tracking-widest">{t.admin_desc}</p>
+                  </div>
                 </div>
                 <button 
-                  onClick={async () => {
-                    if (!oldPassword || !newPassword) return;
-                    setChangingPassword(true);
-                    try {
-                      await api.changePassword(user!.id, oldPassword, newPassword);
-                      setOldPassword('');
-                      setNewPassword('');
-                      alert('تم تغيير كلمة المرور بنجاح');
-                    } catch (err: any) {
-                      alert(err.message || 'فشلت العملية');
-                    } finally {
-                      setChangingPassword(false);
-                    }
-                  }}
-                  disabled={changingPassword || !oldPassword || !newPassword}
-                  className="w-full bg-zinc-800 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg disabled:opacity-50"
+                  onClick={() => setShowAdminPanel(true)}
+                  className="w-full bg-emerald-500 text-white py-5 rounded-[2rem] font-black text-sm relative z-10 shadow-xl shadow-emerald-500/20 active:scale-95 transition-all"
                 >
-                  {changingPassword ? 'جاري التغيير...' : 'تحديث كلمة المرور'}
+                  {t.open_admin}
                 </button>
-              </div>
-            </div>
+              </section>
+            )}
 
-            <div className="bg-rose-500/5 border border-rose-500/10 p-6 rounded-[2rem] space-y-4">
-              <div className="flex items-center gap-3 text-rose-500">
-                <X size={24} />
-                <h3 className="font-bold">تصفير الحساب</h3>
-              </div>
-              <p className="text-xs text-zinc-500 leading-relaxed font-medium">
-                هذا الزر سيقوم بحذف جميع العمليات المسجلة حالياً وتصفير الأرصدة. سيتم حفظ "سنابشوت" تلقائياً يمكنك الرجوع إليه في أي وقت بالأسفل.
-              </p>
-              {!isResetConfirming ? (
-                <button 
-                  onClick={() => setIsResetConfirming(true)}
-                  className="w-full py-4 bg-rose-500/10 text-rose-500 border border-rose-500/20 font-black rounded-2xl active:scale-95 transition-all"
-                >
-                  تصفير البيانات
-                </button>
-              ) : (
-                <div className="flex gap-3">
-                  <button 
-                    onClick={handleResetData}
-                    className="flex-[2] py-4 bg-rose-500 text-white font-black rounded-2xl animate-pulse"
-                  >
-                    تأكيد الحذف النهائي
-                  </button>
-                  <button 
-                    onClick={() => setIsResetConfirming(false)}
-                    className="flex-1 py-4 bg-zinc-800 text-zinc-400 font-bold rounded-2xl"
-                  >
-                    إلغاء
-                  </button>
+            {/* Danger Zone */}
+            <section className="bg-rose-500/5 backdrop-blur-3xl rounded-[3rem] border border-rose-500/20 p-8 space-y-8 relative overflow-hidden group">
+               <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-500 transition-colors group-hover:bg-rose-500 group-hover:text-white">
+                    <Trash2 size={18} />
+                  </div>
+                  <h3 className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-widest">{t.reset_data}</h3>
+               </div>
+               
+               <div className="space-y-6">
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold leading-relaxed">{t.reset_desc}</p>
+                  
+                  {!isResetConfirming ? (
+                    <button 
+                      onClick={() => setIsResetConfirming(true)}
+                      className="w-full py-5 bg-rose-500/5 text-rose-500 border border-rose-500/20 font-black rounded-[2rem] text-xs hover:bg-rose-500/10 transition-all uppercase tracking-widest"
+                    >
+                      {t.reset_data}
+                    </button>
+                  ) : (
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={handleResetData}
+                        className="flex-[2] py-5 bg-rose-500 text-white font-black rounded-[2rem] animate-pulse text-xs uppercase tracking-widest shadow-xl shadow-rose-500/20"
+                      >
+                        {t.confirm_reset}
+                      </button>
+                      <button 
+                        onClick={() => setIsResetConfirming(false)}
+                        className="flex-1 py-5 bg-zinc-200 dark:bg-zinc-900 text-zinc-500 font-bold rounded-[2rem] text-xs uppercase tracking-widest border border-zinc-300 dark:border-white/5"
+                      >
+                        {t.cancel}
+                      </button>
+                    </div>
+                  )}
+               </div>
+            </section>
+
+            {/* Logout Footer */}
+            <div className="pt-4 border-t border-white/5">
+              <button 
+                onClick={handleLogout}
+                className="w-full py-8 flex items-center justify-center gap-3 text-zinc-600 hover:text-white transition-colors group"
+              >
+                <div className="p-2 bg-zinc-900 rounded-lg group-hover:bg-rose-500/10 group-hover:text-rose-500 transition-colors">
+                  <LogOut size={16} />
                 </div>
-              )}
-            </div>
-
-            {/* Snapshots History */}
-            <div className="space-y-4">
-              <h3 className="font-bold text-zinc-100 flex items-center gap-2">
-                سنابشوت تاريخية
-                <span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded-full border border-white/10 text-zinc-500">{snapshots.length}</span>
-              </h3>
-              <div className="space-y-3">
-                {snapshots.length > 0 ? snapshots.map((s) => (
-                  <div 
-                    key={s.id} 
-                    onClick={() => setViewingSnapshot(s)}
-                    className="bg-zinc-900 p-5 rounded-3xl border border-white/5 space-y-4 cursor-pointer hover:border-white/20 transition-all active:scale-95"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-sm font-black text-white">{new Date(s.date).toLocaleDateString('ar-SA', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                        <p className="text-[10px] text-zinc-500 font-medium">حالة الحساب عند التصفير</p>
-                      </div>
-                      <div className="bg-zinc-950 px-3 py-1 rounded-full border border-white/5 text-[10px] font-bold text-zinc-400">
-                        {s.transactionCount} عملية
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 pt-2">
-                      <div className="bg-zinc-950/50 p-3 rounded-2xl border border-white/5">
-                        <span className="text-[9px] text-zinc-500 block uppercase">المجموع</span>
-                        <p className="text-sm font-black text-white">{s.totalAmount.toLocaleString()}</p>
-                      </div>
-                      <div className="bg-zinc-950/50 p-3 rounded-2xl border border-white/5">
-                        <span className="text-[9px] text-zinc-500 block uppercase">كاش/بنك</span>
-                        <p className="text-sm font-black text-white">{s.cashAmount.toLocaleString()} / {s.bankAmount.toLocaleString()}</p>
-                      </div>
-                    </div>
-                  </div>
-                )) : (
-                  <div className="text-center py-10 opacity-30">
-                    <p className="text-xs font-bold">لا يوجد أرشيف سنابشوت بعد</p>
-                  </div>
-                )}
-              </div>
+                <span className="text-[10px] font-black uppercase tracking-[0.4em]">{t.logout}</span>
+              </button>
             </div>
           </div>
         )}
@@ -1212,21 +1448,21 @@ export default function App() {
 
       {/* Bottom Nav */}
       <div className="fixed bottom-8 left-6 right-6 z-40 lg:max-w-lg lg:mx-auto">
-        <nav className="bg-zinc-900/80 backdrop-blur-3xl rounded-[3rem] border border-white/5 py-4 px-6 flex justify-between items-center shadow-[0_25px_60px_rgba(0,0,0,0.6)]">
+        <nav className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-3xl rounded-[3rem] border border-black/5 dark:border-white/5 py-4 px-6 flex justify-between items-center shadow-[0_25px_60px_rgba(0,0,0,0.1)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.6)]">
           <button 
             onClick={() => setActiveTab('home')}
-            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'home' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'home' ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-600 dark:hover:text-zinc-400'}`}
           >
             <LayoutDashboard size={22} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
-            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'home' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الرئيسية</span>
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'home' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-zinc-900 dark:bg-white rounded-full absolute -top-2" />}{t.home}</span>
           </button>
           
           <button 
             onClick={() => setActiveTab('analysis')}
-            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'analysis' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'analysis' ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-600 dark:hover:text-zinc-400'}`}
           >
             <PieChart size={22} strokeWidth={activeTab === 'analysis' ? 2.5 : 2} />
-            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'analysis' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}التحليل</span>
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'analysis' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-zinc-900 dark:bg-white rounded-full absolute -top-2" />}{t.analysis}</span>
           </button>
 
           <div className="relative -mt-16">
@@ -1234,7 +1470,7 @@ export default function App() {
               whileHover={{ scale: 1.1, rotate: 90 }}
               whileTap={{ scale: 0.9 }}
               onClick={() => setShowAddModal(true)}
-              className="bg-white text-zinc-950 p-5 rounded-3xl shadow-[0_20px_40px_rgba(255,255,255,0.15)] ring-[10px] ring-zinc-950 transition-all"
+              className="bg-zinc-950 dark:bg-white text-white dark:text-zinc-950 p-5 rounded-3xl shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(255,255,255,0.15)] ring-[10px] ring-zinc-50 dark:ring-zinc-950 transition-all"
             >
               <Plus size={28} strokeWidth={3} />
             </motion.button>
@@ -1242,18 +1478,18 @@ export default function App() {
 
           <button 
             onClick={() => setActiveTab('funds')}
-            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'funds' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'funds' ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-600 dark:hover:text-zinc-400'}`}
           >
             <Shield size={22} strokeWidth={activeTab === 'funds' ? 2.5 : 2} />
-            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'funds' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الصناديق</span>
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'funds' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-zinc-900 dark:bg-white rounded-full absolute -top-2" />}{t.funds}</span>
           </button>
 
           <button 
             onClick={() => setActiveTab('settings')}
-            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'settings' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === 'settings' ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-600 hover:text-zinc-600 dark:hover:text-zinc-400'}`}
           >
             <Settings size={22} strokeWidth={activeTab === 'settings' ? 2.5 : 2} />
-            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'settings' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-white rounded-full absolute -top-2" />}الإعدادات</span>
+            <span className="text-[8px] font-black uppercase tracking-widest">{activeTab === 'settings' && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-zinc-900 dark:bg-white rounded-full absolute -top-2" />}{t.settings}</span>
           </button>
         </nav>
       </div>
@@ -1266,6 +1502,9 @@ export default function App() {
             onClose={() => setShowAddModal(false)} 
             onAdd={handleAddTransaction} 
             appCurrency={appCurrency}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
           />
         )}
         {showSubscriptionModal.show && (
@@ -1274,6 +1513,8 @@ export default function App() {
             subscription={showSubscriptionModal.sub}
             onClose={() => setShowSubscriptionModal({ show: false })}
             onRefresh={refreshData}
+            t={t}
+            privacyMode={privacyMode}
           />
         )}
         {showAllTransactions && (
@@ -1281,6 +1522,9 @@ export default function App() {
             transactions={transactions}
             onClose={() => setShowAllTransactions(false)}
             appCurrency={appCurrency}
+            language={language}
+            t={t}
+            privacyMode={privacyMode}
           />
         )}
         {viewingSnapshot && (
@@ -1288,6 +1532,9 @@ export default function App() {
             snapshot={viewingSnapshot}
             onClose={() => setViewingSnapshot(null)}
             appCurrency={appCurrency}
+            language={language}
+            t={t}
+            privacyMode={privacyMode}
           />
         )}
         {showFundModal && (
@@ -1297,6 +1544,9 @@ export default function App() {
             appCurrency={appCurrency}
             onClose={() => setShowFundModal(false)}
             onRefresh={refreshData}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
           />
         )}
         {showMasterBalanceModal && (
@@ -1309,160 +1559,141 @@ export default function App() {
             onClose={() => setShowMasterBalanceModal(false)}
             onOpenAdmin={() => setShowAdminPanel(true)}
             onRefresh={refreshData}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
           />
         )}
         {showInstallGuide && (
-          <InstallGuideModal user={user} onClose={() => setShowInstallGuide(false)} />
+          <InstallGuideModal user={user} onClose={() => setShowInstallGuide(false)} t={t} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function InstallGuideModal({ user, onClose }: { user: any, onClose: () => void }) {
+function InstallGuideModal({ user, onClose, t }: { user: any, onClose: () => void, t: any }) {
   const [activeTab, setActiveTab] = useState<'iphone' | 'siri'>('iphone');
 
   const iphoneSteps = [
     {
-      title: "الخطوة الأولى",
-      desc: "اضغط على زر المشاركة في متصفح سفاري بالأسفل",
+      title: t.iphone_step1_title,
+      desc: t.iphone_step1_desc,
       img: "/iphone-step1.png"
     },
     {
-      title: "الخطوة الثانية",
-      desc: "انزل للأسفل واضغط على 'إضافة إلى الشاشة الرئيسية'",
+      title: t.iphone_step2_title,
+      desc: t.iphone_step2_desc,
       img: "/iphone-step2.png"
     },
     {
-      title: "الخطوة الثالثة",
-      desc: "اضغط على 'إضافة' في الزاوية العلوية وسيكون جاهزاً",
+      title: t.iphone_step3_title,
+      desc: t.iphone_step3_desc,
       img: "/iphone-step3.png"
     }
   ];
 
   const siriSteps = [
     {
-      title: "تطبيق Shortcuts",
-      desc: "افتح تطبيق 'الاختصارات' (Shortcuts) على جوالك وأنشئ اختصاراً جديداً"
+      title: t.siri_step1_title,
+      desc: t.siri_step1_desc
     },
     {
-      title: "إملاء النص",
-      desc: "أضف إجراء 'Dictate Text' (إملاء النص) واجعل اللغة العربية/الإنجليزية"
+      title: t.siri_step2_title,
+      desc: t.siri_step2_desc
     },
     {
-      title: "جلب محتويات الرابط",
-      desc: "أضف إجراء 'Get Contents of URL' وضع الرابط: " + window.location.origin + "/api/quick-add"
+      title: t.siri_step3_title,
+      desc: (t.siri_step3_desc || "") + window.location.origin + "/api/quick-add"
     },
     {
-      title: "الإعدادات التقنية",
-      desc: "اجعل الطريقة (Method) هي POST، وأضف Header باسم 'x-api-key' وضَع فيه مفتاحك الخاص من الإعدادات، وفي Body اجعل JSON يحتوي على مفتاح 'text' قيمته هي 'Dictated Text'"
+      title: t.siri_step4_title,
+      desc: t.siri_step4_desc
     }
   ];
 
   return (
     <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-950/95 backdrop-blur-2xl"
+      initial={{ opacity: 0, y: '100%' }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: '100%' }}
+      className="fixed inset-0 z-50 flex items-end justify-center p-4 bg-black/60 backdrop-blur-sm"
     >
-      <motion.div 
-        initial={{ scale: 0.9, opacity: 0, y: 30 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[85vh]"
-      >
-        <div className="p-8 border-b border-white/5 space-y-6 sticky top-0 bg-zinc-900 z-10">
+      <div className="w-full max-w-lg bg-white dark:bg-zinc-900 rounded-[3rem] overflow-hidden shadow-2xl balance-modal-h">
+        <div className="p-8 space-y-8 h-full overflow-y-auto">
           <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-xl font-black text-white">دليل الاستخدام</h2>
-              <p className="text-[10px] text-zinc-500 font-bold">كل ما تحتاجه للوصول السريع</p>
-            </div>
-            <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500">
-              <X size={24} />
-            </button>
+            <h2 className="text-2xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.install_guide_title || t.install_guide}</h2>
+            <button onClick={onClose} className="w-10 h-10 bg-zinc-100 dark:bg-white/5 rounded-full flex items-center justify-center text-zinc-400 font-bold"><X size={20} /></button>
           </div>
 
-          <div className="flex p-1 bg-zinc-950 rounded-2xl border border-white/5">
+          <div className="flex bg-zinc-100 dark:bg-zinc-950 p-1 rounded-2xl border border-black/5 dark:border-white/5">
             <button 
               onClick={() => setActiveTab('iphone')}
-              className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${activeTab === 'iphone' ? 'bg-white text-zinc-950 shadow-lg' : 'text-zinc-500'}`}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black transition-all ${activeTab === 'iphone' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-lg' : 'text-zinc-500'}`}
             >
-              كتطبيق iPhone
+              <Smartphone size={14} />
+              {t.iphone_tab || t.iphone_app}
             </button>
             <button 
               onClick={() => setActiveTab('siri')}
-              className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${activeTab === 'siri' ? 'bg-white text-zinc-950 shadow-lg' : 'text-zinc-500'}`}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black transition-all ${activeTab === 'siri' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-lg' : 'text-zinc-500'}`}
             >
-              عبر Siri
+              <Mic size={14} />
+              {t.siri_app || t.siri}
             </button>
           </div>
-        </div>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-12 custom-scrollbar" dir="rtl">
-          {activeTab === 'iphone' ? (
-            iphoneSteps.map((s, i) => (
-              <div key={i} className="space-y-4 text-center">
-                <div className="flex items-center justify-center gap-3 mb-2">
-                  <span className="w-8 h-8 rounded-full bg-white text-zinc-950 flex items-center justify-center font-black text-sm">
-                    {i + 1}
-                  </span>
-                  <h3 className="font-black text-white">{s.title}</h3>
+          <div className="space-y-6">
+            {(activeTab === 'iphone' ? iphoneSteps : siriSteps).map((step: any, i: number) => (
+              <motion.div 
+                key={i}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+                className="bg-zinc-50 dark:bg-zinc-950/50 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 flex gap-5 items-center"
+              >
+                <div className="w-12 h-12 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl flex items-center justify-center font-black text-lg shrink-0 shadow-lg">
+                  {i + 1}
                 </div>
-                <p className="text-zinc-400 text-xs font-bold leading-relaxed">{s.desc}</p>
-                <div className="bg-zinc-950 rounded-[2rem] border border-white/5 overflow-hidden aspect-[9/16] relative">
-                  <img 
-                    src={s.img} 
-                    alt={s.title} 
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = `https://placehold.co/1080x1920/18181b/ffffff?text=Image+${i+1}`;
+                <div>
+                  <h4 className="text-zinc-900 dark:text-white font-black text-sm mb-1">{step.title}</h4>
+                  <p className="text-[10px] text-zinc-500 font-bold leading-relaxed">{step.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+
+          {activeTab === 'siri' && (
+            <div className="bg-indigo-600 rounded-[2.5rem] p-8 space-y-6 text-white relative overflow-hidden shadow-2xl shadow-indigo-500/20">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-[60px] -translate-y-10 translate-x-10 pointer-events-none"></div>
+               <div className="relative z-10 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-black uppercase tracking-widest opacity-60">{t.siri_key}</p>
+                    <p className="font-mono text-xl font-bold tracking-widest">{user?.siriToken || '••••••••'}</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                       if (user?.siriToken) {
+                         navigator.clipboard.writeText(user.siriToken);
+                         alert(t.copy_success);
+                       }
                     }}
-                  />
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="space-y-8">
-              {siriSteps.map((s, i) => (
-                <div key={i} className="flex gap-4">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-black text-xs">
-                    {i + 1}
-                  </div>
-                  <div className="space-y-1 flex-1">
-                    <h4 className="font-black text-white text-sm">{s.title}</h4>
-                    <p className="text-zinc-400 text-[11px] font-bold leading-relaxed">{s.desc}</p>
-                    {i === 3 && (
-                      <div className="mt-4 p-4 bg-zinc-950 rounded-2xl border border-white/5 space-y-2">
-                        <p className="text-[9px] text-zinc-500 font-black uppercase">مفتاحك الشخصي</p>
-                        <div 
-                          onClick={() => {
-                            if (user?.siriToken) {
-                              navigator.clipboard.writeText(user.siriToken);
-                              alert("تم نسخ المفتاح!");
-                            }
-                          }}
-                          className="font-mono text-[10px] text-blue-400 break-all cursor-pointer hover:text-blue-300 transition-colors"
-                        >
-                          {user?.siriToken || "يرجى إنشاء مفتاح من الإعدادات أولاً"}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                    className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/20 font-bold"
+                  >
+                    <CreditCard size={20} />
+                  </button>
+               </div>
             </div>
           )}
-          
-          <div className="pt-4 text-center">
-            <button 
-              onClick={onClose}
-              className="w-full py-5 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl"
-            >
-              فهمت، جاهز!
-            </button>
-          </div>
+
+          <button 
+            onClick={onClose}
+            className="w-full py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black rounded-2xl shadow-xl active:scale-[0.98] transition-all"
+          >
+            {t.done}
+          </button>
         </div>
-      </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -1475,7 +1706,10 @@ function MasterBalanceModal({
   onUpdateCurrency, 
   onClose,
   onRefresh,
-  onOpenAdmin
+  onOpenAdmin,
+  t,
+  language,
+  privacyMode
 }: { 
   user: any, 
   appCurrency: string,
@@ -1484,7 +1718,10 @@ function MasterBalanceModal({
   onUpdateCurrency: (c: string) => Promise<void>,
   onClose: () => void,
   onRefresh: () => void,
-  onOpenAdmin: () => void
+  onOpenAdmin: () => void,
+  t: any,
+  language: 'ar' | 'en',
+  privacyMode: boolean
 }) {
   const [cash, setCash] = useState((initialBalances?.cash || 0).toString());
   const [bank, setBank] = useState((initialBalances?.bank || 0).toString());
@@ -1518,49 +1755,49 @@ function MasterBalanceModal({
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 bg-zinc-950 z-[100] flex flex-col p-6 overflow-y-auto"
-      dir="rtl"
+      className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 z-[100] flex flex-col p-6 overflow-y-auto"
+      dir={t.dir || (language === 'ar' ? 'rtl' : 'ltr')}
     >
-      <div className="flex justify-between items-center mb-10 sticky top-0 bg-zinc-950 z-10 py-2">
+      <div className="flex justify-between items-center mb-10 sticky top-0 bg-zinc-50 dark:bg-zinc-950 z-10 py-2">
         <div>
-          <h2 className="text-2xl font-black text-white">إدارة الحسابات</h2>
-          <p className="text-xs text-zinc-500">تحكم شامل بأرصدتك وعملتك</p>
+          <h2 className="text-2xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.accounts_management}</h2>
+          <p className="text-xs text-zinc-500 font-bold">{t.accounts_management_desc}</p>
         </div>
-        <button onClick={onClose} className="bg-zinc-900 border border-white/5 p-3 rounded-2xl text-zinc-500">
+        <button onClick={onClose} className="bg-zinc-200 dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-500 active:bg-zinc-300 dark:active:bg-zinc-800">
           <X size={24} />
         </button>
       </div>
 
-      <div className="space-y-10 flex-1">
+      <div className="space-y-10 flex-1 max-w-md mx-auto w-full">
         {/* Currency Section */}
         <div className="space-y-4">
-          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">العملة الافتراضية</label>
+          <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.default_currency}</label>
           <div className="grid grid-cols-4 gap-3">
-            {['ر.س', 'ج.م', 'USD', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].map((cur) => (
+            {['ر.س', 'ج.م', 'AED', 'KWD', 'USD', 'EUR', 'GBP', 'TRY'].map((cur) => (
               <button
                 key={cur}
                 onClick={() => onUpdateCurrency(cur)}
-                className={`py-4 rounded-2xl text-xs font-black border transition-all ${appCurrency === cur ? 'bg-white text-zinc-950 border-white shadow-lg' : 'bg-zinc-900 text-zinc-500 border-white/5'}`}
+                className={`py-4 rounded-2xl text-[10px] font-black border transition-all shadow-sm ${appCurrency === cur ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 border-transparent shadow-lg' : 'bg-white dark:bg-zinc-900 text-zinc-400 dark:text-zinc-600 border-black/5 dark:border-white/5 hover:border-zinc-300 dark:hover:border-zinc-700'}`}
               >
-                {cur}
+                {getDisplayCurrency(cur, language)}
               </button>
             ))}
           </div>
-          <p className="text-[10px] text-amber-500/80 px-1">ملاحظة: تغيير العملة سيقوم بتحويل جميع المبالغ المسجلة تلقائياً حسب أسعار الصرف الحالية.</p>
+          <p className="text-[10px] text-amber-500 font-bold px-1 italic">{t.currency_note}</p>
         </div>
 
         {/* Spendable Balances */}
         <div className="space-y-6">
-          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">الأرصدة المتاحة للصرف</label>
+          <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.spendable_balances}</label>
           <div className="grid grid-cols-1 gap-4">
-            <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 space-y-4">
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4 shadow-sm">
                <div className="flex justify-between items-center">
-                 <span className="text-[10px] font-black text-zinc-500 uppercase">الكاش الشخصي</span>
-                 <UserIcon size={16} className="text-zinc-600" />
+                 <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase">{t.personal_cash}</span>
+                 <Wallet size={16} className="text-zinc-400" />
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="text"
+                  type={privacyMode ? "password" : "text"}
                   inputMode="decimal"
                   value={cash}
                   onChange={(e) => {
@@ -1569,19 +1806,19 @@ function MasterBalanceModal({
                       setCash(val);
                     }
                   }}
-                  className="bg-transparent text-3xl font-black text-white outline-none w-full"
+                  className="bg-transparent text-3xl font-black text-zinc-900 dark:text-white outline-none w-full"
                  />
-                 <span className="text-lg font-bold text-zinc-600">{appCurrency}</span>
+                 <span className="text-lg font-bold text-zinc-400 dark:text-zinc-600">{getDisplayCurrency(appCurrency, language)}</span>
                </div>
             </div>
-            <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5 space-y-4">
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4 shadow-sm">
                <div className="flex justify-between items-center">
-                 <span className="text-[10px] font-black text-zinc-500 uppercase">رصيد البنك</span>
-                 <CreditCard size={16} className="text-zinc-600" />
+                 <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase">{t.bank_balance}</span>
+                 <Smartphone size={16} className="text-zinc-400" />
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="text"
+                  type={privacyMode ? "password" : "text"}
                   inputMode="decimal"
                   value={bank}
                   onChange={(e) => {
@@ -1590,9 +1827,9 @@ function MasterBalanceModal({
                       setBank(val);
                     }
                   }}
-                  className="bg-transparent text-3xl font-black text-white outline-none w-full"
+                  className="bg-transparent text-3xl font-black text-zinc-900 dark:text-white outline-none w-full"
                  />
-                 <span className="text-lg font-bold text-zinc-600">{appCurrency}</span>
+                 <span className="text-lg font-bold text-zinc-400 dark:text-zinc-600">{getDisplayCurrency(appCurrency, language)}</span>
                </div>
             </div>
           </div>
@@ -1600,16 +1837,16 @@ function MasterBalanceModal({
 
         {/* Funds Balances */}
         <div className="space-y-6">
-          <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">صناديق الادخار والطوارئ</label>
+          <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.funds_management}</label>
           <div className="grid grid-cols-1 gap-4">
-            <div className="bg-zinc-900 p-6 rounded-[2rem] border border-amber-500/10 space-y-4">
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-amber-500/10 dark:border-amber-500/20 space-y-4 shadow-sm">
                <div className="flex justify-between items-center">
-                 <span className="text-[10px] font-black text-amber-500 uppercase">صندوق الطوارئ</span>
+                 <span className="text-[10px] font-black text-amber-500 uppercase">{t.emergency_fund_label}</span>
                  <Shield size={16} className="text-amber-500" />
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="text"
+                  type={privacyMode ? "password" : "text"}
                   inputMode="decimal"
                   value={emergency}
                   onChange={(e) => {
@@ -1618,19 +1855,19 @@ function MasterBalanceModal({
                       setEmergency(val);
                     }
                   }}
-                  className="bg-transparent text-3xl font-black text-amber-200 outline-none w-full"
+                  className="bg-transparent text-3xl font-black text-amber-600 dark:text-amber-500 outline-none w-full"
                  />
-                 <span className="text-lg font-bold text-amber-500/50">{appCurrency}</span>
+                 <span className="text-lg font-bold text-amber-500/30">{getDisplayCurrency(appCurrency, language)}</span>
                </div>
             </div>
-            <div className="bg-zinc-900 p-6 rounded-[2rem] border border-indigo-500/10 space-y-4">
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-indigo-500/10 dark:border-indigo-500/20 space-y-4 shadow-sm">
                <div className="flex justify-between items-center">
-                 <span className="text-[10px] font-black text-indigo-500 uppercase">صندوق الادخار</span>
+                 <span className="text-[10px] font-black text-indigo-500 uppercase">{t.savings_fund_label}</span>
                  <TrendingUp size={16} className="text-indigo-500" />
                </div>
                <div className="flex items-center gap-3">
                  <input 
-                  type="text"
+                  type={privacyMode ? "password" : "text"}
                   inputMode="decimal"
                   value={savings}
                   onChange={(e) => {
@@ -1639,22 +1876,22 @@ function MasterBalanceModal({
                       setSavings(val);
                     }
                   }}
-                  className="bg-transparent text-3xl font-black text-indigo-200 outline-none w-full"
+                  className="bg-transparent text-3xl font-black text-indigo-600 dark:text-indigo-500 outline-none w-full"
                  />
-                 <span className="text-lg font-bold text-indigo-500/50">{appCurrency}</span>
+                 <span className="text-lg font-bold text-indigo-500/30">{getDisplayCurrency(appCurrency, language)}</span>
                </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-12 sticky bottom-0 bg-zinc-950 py-4">
+      <div className="mt-12 sticky bottom-0 bg-zinc-50 dark:bg-zinc-950 py-6 max-w-md mx-auto w-full space-y-4">
         <button 
           onClick={handleSave}
           disabled={loading}
-          className="w-full bg-white text-zinc-950 py-6 rounded-[2rem] font-black text-xl active:scale-95 transition-all shadow-xl disabled:opacity-50"
+          className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 py-6 rounded-[2rem] font-black text-lg shadow-2xl active:scale-[0.98] transition-all disabled:opacity-50 italic tracking-tight"
         >
-          {loading ? 'جاري الحفظ...' : 'حفظ جميع التغييرات'}
+          {loading ? t.updating : t.save_all_changes}
         </button>
 
         {user?.isAdmin && (
@@ -1663,10 +1900,10 @@ function MasterBalanceModal({
               onClose();
               onOpenAdmin();
             }}
-            className="w-full mt-4 flex items-center justify-center gap-3 p-5 bg-emerald-500/10 rounded-[2rem] border border-emerald-500/20 text-emerald-500 shadow-lg shadow-emerald-500/5 active:scale-95 transition-all"
+            className="w-full flex items-center justify-center gap-3 py-5 bg-emerald-500/10 rounded-[2rem] border border-emerald-500/10 text-emerald-600 dark:text-emerald-500 shadow-sm active:scale-[0.98] transition-all"
           >
-            <Shield size={20} />
-            <span className="font-black text-sm">فتح لوحة الإدارة</span>
+            <Shield size={18} />
+            <span className="font-black text-xs uppercase tracking-widest">{t.open_admin}</span>
           </button>
         )}
       </div>
@@ -1679,13 +1916,19 @@ function FundManagerModal({
   extraFunds, 
   appCurrency, 
   onClose, 
-  onRefresh 
+  onRefresh,
+  t,
+  language,
+  privacyMode
 }: { 
   user: any, 
   extraFunds: { emergency: number, savings: number }, 
   appCurrency: string,
   onClose: () => void,
-  onRefresh: () => void 
+  onRefresh: () => void,
+  t: any,
+  language: 'ar' | 'en',
+  privacyMode: boolean
 }) {
   const [emergency, setEmergency] = useState(extraFunds.emergency.toString());
   const [savings, setSavings] = useState(extraFunds.savings.toString());
@@ -1713,28 +1956,28 @@ function FundManagerModal({
       initial={{ opacity: 0, y: '100%' }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: '100%' }}
-      className="fixed inset-0 bg-zinc-950 z-[90] flex flex-col p-6 overflow-y-auto"
-      dir="rtl"
+      className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 z-[90] flex flex-col p-6 overflow-y-auto"
+      dir={t.dir || (language === 'ar' ? 'rtl' : 'ltr')}
     >
-      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-950 z-10 py-2">
+      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-50 dark:bg-zinc-950 z-10 py-2">
         <div>
-          <h2 className="text-2xl font-black text-white">إدارة الصناديق</h2>
-          <p className="text-xs text-zinc-500">تحكم في مدخراتك وحالات الطوارئ</p>
+          <h2 className="text-2xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.funds_management}</h2>
+          <p className="text-xs text-zinc-500 font-bold">{t.funds_management_desc}</p>
         </div>
-        <button onClick={onClose} className="bg-zinc-900 border border-white/5 p-3 rounded-2xl text-zinc-500">
+        <button onClick={onClose} className="bg-zinc-200 dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-500 active:bg-zinc-300 dark:active:bg-zinc-800 font-bold">
           <X size={24} />
         </button>
       </div>
 
-      <div className="space-y-8 flex-1">
+      <div className="space-y-8 flex-1 max-w-md mx-auto w-full">
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
-            <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest">صندوق الطوارئ</label>
+            <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest">{t.emergency_fund_label}</label>
             <Shield className="text-amber-500" size={16} />
           </div>
           <div className="relative group">
             <input 
-              type="text"
+              type={privacyMode ? "password" : "text"}
               inputMode="decimal"
               value={emergency}
               onChange={(e) => {
@@ -1743,24 +1986,24 @@ function FundManagerModal({
                   setEmergency(val);
                 }
               }}
-              className="w-full bg-zinc-900 border border-white/5 p-6 rounded-[2rem] text-3xl font-black text-white focus:border-amber-500 outline-none transition-all"
+              className="w-full bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-6 rounded-[2rem] text-3xl font-black text-zinc-900 dark:text-white focus:border-amber-500 outline-none transition-all shadow-sm"
               placeholder="0.00"
             />
-            <span className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-600 font-bold">{appCurrency}</span>
+            <span className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 font-bold">{getDisplayCurrency(appCurrency, language)}</span>
           </div>
-          <p className="text-[10px] text-zinc-500 px-2 leading-relaxed">
-            مبلغ مخصص للحالات المفاجئة (يفضل أن يغطي مصاريف 3-6 أشهر).
+          <p className="text-[10px] text-zinc-500 font-bold px-2 leading-relaxed italic">
+            {t.emergency_fund_note}
           </p>
         </div>
 
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
-            <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">صندوق الادخار</label>
+            <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t.savings_fund_label}</label>
             <TrendingUp className="text-indigo-500" size={16} />
           </div>
           <div className="relative group">
             <input 
-              type="text"
+              type={privacyMode ? "password" : "text"}
               inputMode="decimal"
               value={savings}
               onChange={(e) => {
@@ -1769,72 +2012,72 @@ function FundManagerModal({
                   setSavings(val);
                 }
               }}
-              className="w-full bg-zinc-900 border border-white/5 p-6 rounded-[2rem] text-3xl font-black text-white focus:border-indigo-500 outline-none transition-all"
+              className="w-full bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-6 rounded-[2rem] text-3xl font-black text-zinc-900 dark:text-white focus:border-indigo-500 outline-none transition-all shadow-sm"
               placeholder="0.00"
             />
-            <span className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-600 font-bold">{appCurrency}</span>
+            <span className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-600 font-bold">{getDisplayCurrency(appCurrency, language)}</span>
           </div>
-          <p className="text-[10px] text-zinc-500 px-2 leading-relaxed">
-            مبالغ للخطط المستقبلية أو الأهداف طويلة المدى.
+          <p className="text-[10px] text-zinc-500 font-bold px-2 leading-relaxed italic">
+            {t.savings_fund_note}
           </p>
         </div>
       </div>
 
-      <div className="mt-8">
+      <div className="mt-8 max-w-md mx-auto w-full">
         <button 
           onClick={handleSave}
           disabled={loading}
-          className="w-full bg-white text-zinc-950 py-5 rounded-[2rem] font-black text-lg active:scale-95 transition-all shadow-xl disabled:opacity-50"
+          className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 py-5 rounded-[2rem] font-black text-lg shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 italic tracking-tight"
         >
-          {loading ? 'جاري الحفظ...' : 'حفظ التعديلات'}
+          {loading ? t.updating : t.save}
         </button>
       </div>
     </motion.div>
   );
 }
 
-function AllTransactionsModal({ transactions, onClose, appCurrency }: { transactions: Transaction[], onClose: () => void, appCurrency: string }) {
+function AllTransactionsModal({ transactions, onClose, appCurrency, language, t, privacyMode }: { transactions: Transaction[], onClose: () => void, appCurrency: string, language: 'ar' | 'en', t: any, privacyMode: boolean }) {
   return (
     <motion.div 
       initial={{ opacity: 0, y: '100%' }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: '100%' }}
-      className="fixed inset-0 bg-zinc-950 z-[60] flex flex-col p-6 overflow-y-auto"
-      dir="rtl"
+      className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 z-[60] flex flex-col p-6 overflow-y-auto"
     >
-      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-950 z-10 py-2">
-        <h2 className="text-2xl font-black text-white">كل العمليات</h2>
-        <button onClick={onClose} className="bg-zinc-900 border border-white/5 p-3 rounded-2xl text-zinc-500">
+      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-50 dark:bg-zinc-950 z-10 py-2">
+        <h2 className="text-2xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.all_transactions}</h2>
+        <button onClick={onClose} className="bg-zinc-200 dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-500 font-bold active:bg-zinc-300 dark:active:bg-zinc-800">
           <X size={24} />
         </button>
       </div>
 
-      <div className="space-y-4">
-        {transactions.map((t) => {
-          const category = CATEGORIES[t.category];
-          const isExpense = t.type === 'expense';
-          const isTransfer = t.type === 'transfer';
+      <div className="space-y-4 max-w-md mx-auto w-full pb-10">
+        {transactions.map((tx) => {
+          const category = CATEGORIES[tx.category];
+          const isExpense = tx.type === 'expense';
+          const isTransfer = tx.type === 'transfer';
           return (
-            <div key={t.id} className="bg-zinc-900 p-4 rounded-[2rem] flex items-center gap-5 border border-white/5">
-              <div className={`p-4 rounded-2xl ${category.color} shadow-sm`}>
-                <category.icon size={24} />
+            <div key={tx.id} className="bg-white dark:bg-zinc-900 p-4 rounded-[2rem] flex items-center gap-5 border border-black/5 dark:border-white/5 shadow-sm">
+              <div className={`p-4 rounded-3xl ${category.color} shadow-lg shrink-0`}>
+                <category.icon size={22} className="text-white" />
               </div>
               <div className="flex-1 min-w-0 text-right">
-                <p className="font-bold text-zinc-100 truncate">{t.description}</p>
-                <div className="flex items-center gap-2 mt-0.5 justify-end">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase">
-                    {isTransfer ? 'تحويل' : category.label}
+                <p className="font-black text-zinc-900 dark:text-zinc-100 truncate text-sm italic">{tx.description}</p>
+                <div className="flex items-center gap-2 mt-1 justify-end">
+                  <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+                    {isTransfer ? t.transfer : t[category.label]}
                   </span>
-                  <span className="w-1 h-1 bg-zinc-800 rounded-full"></span>
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase">{new Date(t.date).toLocaleDateString('ar-SA')}</span>
-                  <span className="w-1 h-1 bg-zinc-800 rounded-full"></span>
-                  <span className="text-[10px] font-bold text-zinc-600">
-                    {WALLET_LABELS[t.wallet]} {isTransfer && ` ← ${WALLET_LABELS[t.toWallet!]}`}
+                  <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
+                  <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{new Date(tx.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { day: 'numeric', month: 'short' })}</span>
+                  <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
+                  <span className="text-[9px] font-black text-zinc-500 dark:text-zinc-600 uppercase tracking-tighter italic">
+                    {t[WALLET_LABELS[tx.wallet]]} {isTransfer && ` → ${t[WALLET_LABELS[(tx as any).toWallet!]]}`}
                   </span>
                 </div>
               </div>
-              <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-zinc-100' : isTransfer ? 'text-amber-500' : 'text-emerald-500'}`}>
-                {isExpense ? '-' : isTransfer ? '⇄' : '+'} {t.amount.toFixed(2)}
+              <div className={`text-lg font-black tabular-nums shrink-0 italic ${isExpense ? 'text-zinc-900 dark:text-zinc-100' : isTransfer ? 'text-amber-500' : 'text-emerald-500'}`}>
+                {isExpense ? '-' : isTransfer ? '⇄' : '+'} {formatAmount(tx.amount, privacyMode)}
+                <span className="text-[9px] ml-1 opacity-40">{getDisplayCurrency(appCurrency, language)}</span>
               </div>
             </div>
           );
@@ -1844,71 +2087,73 @@ function AllTransactionsModal({ transactions, onClose, appCurrency }: { transact
   );
 }
 
-function SnapshotDetailModal({ snapshot, onClose, appCurrency }: { snapshot: Snapshot, onClose: () => void, appCurrency: string }) {
+function SnapshotDetailModal({ snapshot, onClose, appCurrency, language, t, privacyMode }: { snapshot: Snapshot, onClose: () => void, appCurrency: string, language: 'ar' | 'en', t: any, privacyMode: boolean }) {
   return (
     <motion.div 
       initial={{ opacity: 0, y: '100%' }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: '100%' }}
-      className="fixed inset-0 bg-zinc-950 z-[80] flex flex-col p-6 overflow-y-auto"
-      dir="rtl"
+      className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 z-[80] flex flex-col p-6 overflow-y-auto"
     >
-      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-950 z-10 py-2">
+      <div className="flex justify-between items-center mb-8 sticky top-0 bg-zinc-50 dark:bg-zinc-950 z-10 py-2">
         <div>
-          <h2 className="text-2xl font-black text-white">تفاصيل السنابشوت</h2>
-          <p className="text-xs text-zinc-500">{new Date(snapshot.date).toLocaleString('ar-SA')}</p>
+          <h2 className="text-2xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.snapshot_details}</h2>
+          <p className="text-xs text-zinc-500 font-bold">{new Date(snapshot.date).toLocaleString(language === 'ar' ? 'ar' : 'en-US')}</p>
         </div>
-        <button onClick={onClose} className="bg-zinc-900 border border-white/5 p-3 rounded-2xl text-zinc-500">
+        <button onClick={onClose} className="bg-zinc-200 dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-500 font-bold active:bg-zinc-300 dark:active:bg-zinc-800">
           <X size={24} />
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5">
-          <p className="text-[10px] font-black text-zinc-500 uppercase">مجموع الحساب</p>
-          <p className="text-2xl font-black text-white">{snapshot.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {appCurrency}</p>
+      <div className="max-w-md mx-auto w-full space-y-8">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 shadow-sm">
+            <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{t.total_snapshot}</p>
+            <p className="text-2xl font-black text-zinc-900 dark:text-white italic mt-1">{formatAmount(snapshot.totalAmount, privacyMode)} <span className="text-[10px] opacity-40">{getDisplayCurrency(appCurrency, language)}</span></p>
+          </div>
+          <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 shadow-sm">
+            <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{t.tx_count}</p>
+            <p className="text-2xl font-black text-zinc-900 dark:text-white italic mt-1">{snapshot.transactionCount}</p>
+          </div>
         </div>
-        <div className="bg-zinc-900 p-6 rounded-[2rem] border border-white/5">
-          <p className="text-[10px] font-black text-zinc-500 uppercase">عدد العمليات</p>
-          <p className="text-2xl font-black text-white">{snapshot.transactionCount}</p>
-        </div>
-      </div>
 
-      <div className="space-y-4">
-        <h3 className="font-bold text-zinc-400 px-1">العمليات المؤرشفة</h3>
-        {(snapshot.transactions || []).map((t) => {
-          const category = CATEGORIES[t.category];
-          const isExpense = t.type === 'expense';
-          const isTransfer = t.type === 'transfer';
-          return (
-            <div key={t.id} className="bg-zinc-900/50 p-4 rounded-[2rem] flex items-center gap-5 border border-white/5 opacity-80">
-              <div className={`p-4 rounded-2xl ${category.color} shadow-sm`}>
-                <category.icon size={24} />
-              </div>
-              <div className="flex-1 min-w-0 text-right">
-                <p className="font-bold text-zinc-100 truncate">{t.description}</p>
-                <div className="flex items-center gap-2 mt-0.5 justify-end">
-                  <span className="text-[10px] font-bold text-zinc-500">
-                    {isTransfer ? 'تحويل' : category.label}
-                  </span>
-                  <span className="w-1 h-1 bg-zinc-800 rounded-full"></span>
-                  <span className="text-[10px] font-bold text-zinc-600">
-                    {WALLET_LABELS[t.wallet]} {isTransfer && t.toWallet && ` ← ${WALLET_LABELS[t.toWallet]}`}
-                  </span>
+        <div className="space-y-4 pb-10">
+          <h3 className="font-black text-zinc-400 dark:text-zinc-600 px-1 uppercase text-[10px] tracking-widest">{t.archived_transactions}</h3>
+          {(snapshot.transactions || []).map((tx) => {
+            const category = CATEGORIES[tx.category];
+            const isExpense = tx.type === 'expense';
+            const isTransfer = tx.type === 'transfer';
+            return (
+              <div key={tx.id} className="bg-white/50 dark:bg-zinc-900/50 p-4 rounded-[2rem] flex items-center gap-5 border border-black/5 dark:border-white/5 opacity-80 scale-95 origin-center">
+                <div className={`p-4 rounded-2xl ${category.color} shadow-sm group-hover:shadow-lg transition-all`}>
+                  <category.icon size={20} className="text-white" />
+                </div>
+                <div className="flex-1 min-w-0 text-right">
+                  <p className="font-bold text-zinc-900 dark:text-zinc-100 truncate italic">{tx.description}</p>
+                  <div className="flex items-center gap-2 mt-0.5 justify-end">
+                    <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">
+                      {isTransfer ? t.transfer : t[category.label]}
+                    </span>
+                    <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
+                    <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-600">
+                      {t[WALLET_LABELS[(tx as any).wallet]]} {isTransfer && (tx as any).toWallet && ` ← ${t[WALLET_LABELS[(tx as any).toWallet]]}`}
+                    </span>
+                  </div>
+                </div>
+                <div className={`text-lg font-black tabular-nums italic ${isExpense ? 'text-zinc-900 dark:text-zinc-100' : isTransfer ? 'text-amber-500' : 'text-emerald-500'}`}>
+                  {isExpense ? '-' : isTransfer ? '⇄' : '+'} {formatAmount(tx.amount, privacyMode)}
+                  <span className="text-[9px] ml-1 opacity-40">{getDisplayCurrency(appCurrency, language)}</span>
                 </div>
               </div>
-              <div className={`text-lg font-black tabular-nums ${isExpense ? 'text-zinc-100' : isTransfer ? 'text-amber-500' : 'text-emerald-500'}`}>
-                {isExpense ? '-' : isTransfer ? '⇄' : '+'} {t.amount.toFixed(2)}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </motion.div>
   );
 }
 
-function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { user: any, subscription?: Subscription, onClose: () => void, onRefresh: () => void }) {
+function SubscriptionManagerModal({ user, subscription, onClose, onRefresh, t, privacyMode }: { user: any, subscription?: Subscription, onClose: () => void, onRefresh: () => void, t: any, privacyMode: boolean }) {
   const [name, setName] = useState(subscription?.name || '');
   const [amount, setAmount] = useState(subscription?.amount.toString() || '');
   const [billingDate, setBillingDate] = useState(subscription?.nextBillingDate.split('T')[0] || new Date().toISOString().split('T')[0]);
@@ -1951,26 +2196,26 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
       exit={{ opacity: 0, scale: 0.9 }}
       className="fixed inset-0 bg-zinc-950/80 backdrop-blur-xl z-[70] flex items-center justify-center p-6"
     >
-      <div className="bg-zinc-900 w-full max-w-sm rounded-[3rem] border border-white/10 p-8 space-y-6" dir="rtl">
+      <div className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-[3rem] border border-black/10 dark:border-white/10 p-8 space-y-6 shadow-2xl">
         <div className="flex justify-between items-center">
-          <h2 className="text-xl font-black text-white">{subscription ? 'تعديل اشتراك' : 'إضافة اشتراك'}</h2>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white"><X size={24} /></button>
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{subscription ? t.edit_subscription : t.add_subscription}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-white transition-colors"><X size={24} /></button>
         </div>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">اسم الاشتراك</label>
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.subscription_name}</label>
             <input 
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20"
-              placeholder="مثلاً: Netflix"
+              className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-300 dark:focus:border-white/20 transition-all font-bold"
+              placeholder={t.name_placeholder}
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">المبلغ الشهري</label>
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.monthly_amount}</label>
             <input 
-              type="text"
+              type={privacyMode ? "password" : "text"}
               inputMode="decimal"
               value={amount}
               onChange={(e) => {
@@ -1979,17 +2224,17 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
                   setAmount(val);
                 }
               }}
-              className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20"
+              className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-300 dark:focus:border-white/20 transition-all font-bold"
               placeholder="0.00"
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">تاريخ التجديد القادم</label>
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.next_billing_date}</label>
             <input 
               type="date"
               value={billingDate}
               onChange={(e) => setBillingDate(e.target.value)}
-              className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-white/20"
+              className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-300 dark:focus:border-white/20 transition-all font-bold"
             />
           </div>
         </div>
@@ -1999,15 +2244,15 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
             <>
               <button 
                 onClick={handleSave}
-                className="flex-1 py-4 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all"
+                className="flex-1 py-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-lg italic"
               >
-                {subscription ? 'تحديث البيانات' : 'إضافة الاشتراك'}
+                {subscription ? t.update_data : t.add_subscription}
               </button>
               {subscription && (
                 <button 
                   id="delete-subscription-btn"
                   onClick={() => setIsConfirmingDelete(true)}
-                  className="w-16 h-16 flex items-center justify-center bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-500/20 active:scale-95 transition-all"
+                  className="w-16 h-16 flex items-center justify-center bg-rose-500/10 text-rose-500 rounded-2xl hover:bg-rose-500 hover:text-white active:scale-95 transition-all shadow-sm"
                 >
                   <X size={24} />
                 </button>
@@ -2017,13 +2262,13 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
             <>
               <button 
                 onClick={handleDelete}
-                className="flex-1 py-4 bg-rose-500 text-white font-black rounded-2xl active:scale-95 animate-pulse"
+                className="flex-1 py-4 bg-rose-500 text-white font-black rounded-2xl active:scale-95 animate-pulse italic"
               >
-                تأكيد حذف الاشتراك؟
+                {t.confirm_delete_subscription}
               </button>
               <button 
                 onClick={() => setIsConfirmingDelete(false)}
-                className="w-16 h-16 flex items-center justify-center bg-zinc-800 text-zinc-400 rounded-2xl active:scale-95"
+                className="w-16 h-16 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 rounded-2xl active:scale-95 transition-all shadow-sm"
               >
                 <X size={24} />
               </button>
@@ -2035,43 +2280,43 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh }: { 
   );
 }
 
-function Tutorial({ onComplete }: { onComplete: () => void }) {
+function Tutorial({ onComplete, t }: { onComplete: () => void, t: any }) {
   const [step, setStep] = useState(0);
   
   const steps = [
     {
-      title: "أهلاً بك في مصاريفي! 🚀",
-      description: "هذا التطبيق مصمم لمساعدتك على تنظيم ميزانيتك بكل بساطة واحترافية. خلنا ناخذ جولة سريعة.",
-      icon: <LayoutDashboard size={40} className="text-white" />
+      title: t.tutorial_welcome_title,
+      description: t.tutorial_welcome_desc,
+      icon: <LayoutDashboard size={40} className="text-zinc-900 dark:text-white" />
     },
     {
-      title: "الميزانية والتحركات 💰",
-      description: "في الصفحة الرئيسية، تقدر تشوف إجمالي مبالغك (كاش وبنك)، وتطالع الرسم البياني اللي يوضح لك 'تحركات الميزانية' ومقارنة الدخل بالمصروف.",
+      title: t.tutorial_budget_title,
+      description: t.tutorial_budget_desc,
       icon: <PieChart size={40} className="text-amber-500" />
     },
     {
-      title: "إضافة عملية (الزر الأهم!) ➕",
-      description: "الزر اللي في النص تحت (+) هو أهم زر في التطبيق. أي مبلغ تصرفه أو يدخل لك، سجل بالضغط عليه مباشرة عشان ميزانيتك تظل دقيقة.",
+      title: t.tutorial_add_title,
+      description: t.tutorial_add_desc,
       icon: <Plus size={40} className="text-emerald-500" />
     },
     {
-      title: "قسم التحليل الذكي 📊",
-      description: "زر 'التحليل' في الأسفل يعطيك نظرة أعمق لمصاريفك، إجمالي المصاريف حسب الفئات، ويقولك وين صرفت أكثر.",
+      title: t.tutorial_analysis_title,
+      description: t.tutorial_analysis_desc,
       icon: <PieChart size={40} className="text-blue-500" />
     },
     {
-      title: "الصناديق والادخار 🛡️",
-      description: "في قسم 'الصناديق'، تقدر تخصص فلوس للطوارئ أو للادخار لمستقبلك بعيداً عن مصاريفك اليومية.",
+      title: t.tutorial_funds_title,
+      description: t.tutorial_funds_desc,
       icon: <Shield size={40} className="text-indigo-500" />
     },
     {
-      title: "تنبيهات الميزانية 🔔",
-      description: "فوق على اليمين فيه جرس التنبيهات. التطبيق راح ينبهك إذا قربت تخلص ميزانيتك أو فيه تحديثات مهمة تفيدك.",
+      title: t.tutorial_notif_title,
+      description: t.tutorial_notif_desc,
       icon: <Bell size={40} className="text-amber-400" />
     },
     {
-      title: "جاهز تبدأ؟ 😍",
-      description: "ابدأ بتعديل أرصدتك الحالية من قسم 'الإعدادات'.. وخلنا نساعدك تدير فلوسك صح!",
+      title: t.tutorial_ready_title,
+      description: t.tutorial_ready_desc,
       icon: <Settings size={40} className="text-zinc-400" />
     }
   ];
@@ -2089,27 +2334,27 @@ function Tutorial({ onComplete }: { onComplete: () => void }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-950/90 backdrop-blur-xl"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-100/90 dark:bg-zinc-950/90 backdrop-blur-xl"
     >
       <motion.div 
         key={step}
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="w-full max-w-sm bg-zinc-900 border border-white/10 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-center space-y-6"
+        className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-center space-y-6"
       >
         <div className="flex justify-center mb-2">
           <motion.div 
             initial={{ rotate: -10, scale: 0.8 }}
             animate={{ rotate: 0, scale: 1 }}
-            className="p-6 bg-zinc-800 rounded-[2rem] border border-white/5"
+            className="p-6 bg-zinc-50 dark:bg-zinc-800 rounded-[2rem] border border-black/5 dark:border-white/5"
           >
             {steps[step].icon}
           </motion.div>
         </div>
 
         <div className="space-y-3">
-          <h2 className="text-2xl font-black text-white">{steps[step].title}</h2>
-          <p className="text-zinc-400 leading-relaxed font-bold text-sm">
+          <h2 className="text-2xl font-black text-zinc-900 dark:text-white italic tracking-tighter uppercase">{steps[step].title}</h2>
+          <p className="text-zinc-500 dark:text-zinc-400 leading-relaxed font-bold text-sm">
             {steps[step].description}
           </p>
         </div>
@@ -2119,21 +2364,21 @@ function Tutorial({ onComplete }: { onComplete: () => void }) {
             {steps.map((_, i) => (
               <div 
                 key={i} 
-                className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-white' : 'w-1.5 bg-zinc-800'}`}
+                className={`h-1.5 rounded-full transition-all ${i === step ? 'w-6 bg-zinc-900 dark:bg-white' : 'w-1.5 bg-zinc-200 dark:bg-zinc-800'}`}
               />
             ))}
           </div>
           <button 
             onClick={handleNext}
-            className="px-8 py-4 bg-white text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-lg"
+            className="px-8 py-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-lg italic"
           >
-            {step === steps.length - 1 ? 'ابدأ الاستخدام' : 'التالي'}
+            {step === steps.length - 1 ? t.tutorial_start : t.tutorial_next}
           </button>
         </div>
 
         <button 
           onClick={onComplete}
-          className="absolute top-6 right-6 text-zinc-600 hover:text-zinc-400 p-1"
+          className="absolute top-6 right-6 text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400 p-1"
         >
           <X size={20} />
         </button>
@@ -2146,34 +2391,37 @@ function NotificationsModal({
   notifications, 
   onClose, 
   onMarkRead, 
-  onDelete 
+  onDelete,
+  language,
+  t
 }: { 
   notifications: AppNotification[], 
   onClose: () => void, 
   onMarkRead: (id: string) => void,
-  onDelete: (id: string) => void
+  onDelete: (id: string) => void,
+  language: string,
+  t: any
 }) {
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-zinc-950/90 backdrop-blur-xl"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-zinc-100/90 dark:bg-zinc-950/90 backdrop-blur-xl"
     >
       <motion.div 
         initial={{ scale: 0.9, y: 20 }}
         animate={{ scale: 1, y: 0 }}
-        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[2.5rem] flex flex-col max-h-[80vh] overflow-hidden shadow-2xl"
-        dir="rtl"
+        className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-[2.5rem] flex flex-col max-h-[80vh] overflow-hidden shadow-2xl"
       >
-        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-zinc-900 sticky top-0 z-10">
+        <div className="p-6 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-white dark:bg-zinc-900 sticky top-0 z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
               <Bell size={20} />
             </div>
-            <h2 className="text-xl font-black text-white">التنبيهات</h2>
+            <h2 className="text-xl font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{t.notifications}</h2>
           </div>
-          <button onClick={onClose} className="p-3 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500 hover:text-white transition-all">
+          <button onClick={onClose} className="p-3 bg-zinc-100 dark:bg-zinc-950 border border-black/5 dark:border-white/5 rounded-2xl text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-all font-bold">
             <X size={20} />
           </button>
         </div>
@@ -2184,14 +2432,14 @@ function NotificationsModal({
               <div 
                 key={n.id} 
                 onClick={() => !n.isRead && onMarkRead(n.id)}
-                className={`p-5 rounded-3xl border transition-all cursor-pointer group relative ${n.isRead ? 'bg-zinc-950/50 border-white/5' : 'bg-white/5 border-emerald-500/20 shadow-lg shadow-emerald-500/5'}`}
+                className={`p-5 rounded-3xl border transition-all cursor-pointer group relative ${n.isRead ? 'bg-zinc-50 dark:bg-zinc-950/50 border-black/5 dark:border-white/5' : 'bg-white dark:bg-white/5 border-emerald-500/20 shadow-lg shadow-emerald-500/5'}`}
               >
                 <div className="flex justify-between items-start gap-4">
                   <div className="space-y-1">
-                    <h3 className={`font-bold text-sm ${n.isRead ? 'text-zinc-300' : 'text-white'}`}>{n.title}</h3>
-                    <p className="text-xs text-zinc-500 leading-relaxed">{n.message}</p>
-                    <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest pt-1">
-                      {new Date(n.date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })}
+                    <h3 className={`font-black text-sm ${n.isRead ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-white italic'}`}>{n.title}</h3>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed font-bold">{n.message}</p>
+                    <p className="text-[9px] text-zinc-400 dark:text-zinc-600 font-black uppercase tracking-widest pt-1 italic">
+                      {new Date(n.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { day: 'numeric', month: 'short' })}
                     </p>
                   </div>
                   <button 
@@ -2206,10 +2454,10 @@ function NotificationsModal({
             ))
           ) : (
             <div className="py-20 text-center space-y-4">
-              <div className="w-16 h-16 bg-zinc-950 rounded-[2rem] flex items-center justify-center mx-auto text-zinc-800 shadow-inner">
+              <div className="w-16 h-16 bg-zinc-50 dark:bg-zinc-950 rounded-[2rem] flex items-center justify-center mx-auto text-zinc-300 dark:text-zinc-800 shadow-inner">
                 <BellOff size={32} />
               </div>
-              <p className="text-sm font-bold text-zinc-500">لا توجد تنبيهات جديدة</p>
+              <p className="text-sm font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{t.no_notifications}</p>
             </div>
           )}
         </div>
@@ -2218,7 +2466,7 @@ function NotificationsModal({
   );
 }
 
-function AdminPanel({ onClose }: { onClose: () => void }) {
+function AdminPanel({ onClose, language, t }: { onClose: () => void, language: string, t: any }) {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [broadcastTitle, setBroadcastTitle] = useState('');
@@ -2248,9 +2496,9 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       await api.broadcastNotification(broadcastTitle, broadcastMessage);
       setBroadcastTitle('');
       setBroadcastMessage('');
-      alert('تم إرسال التنبيه للجميع بنجاح');
+      alert(t.broadcast_success);
     } catch (err) {
-      alert('فشل إرسال التنبيه');
+      alert(t.broadcast_failed);
     } finally {
       setSending(false);
     }
@@ -2261,20 +2509,19 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-950/95 backdrop-blur-3xl"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-100/95 dark:bg-zinc-950/95 backdrop-blur-3xl"
     >
       <motion.div 
         initial={{ scale: 0.9, y: 30 }}
         animate={{ scale: 1, y: 0 }}
-        className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
-        dir="rtl"
+        className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
       >
-        <div className="p-8 border-b border-white/5 flex justify-between items-center bg-zinc-900 sticky top-0 z-10">
+        <div className="p-8 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-white dark:bg-zinc-900 sticky top-0 z-10">
           <div>
-            <h2 className="text-2xl font-black text-emerald-500">لوحة الإدارة</h2>
-            <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">إدارة المستخدمين والنظام</p>
+            <h2 className="text-2xl font-black text-emerald-600 dark:text-emerald-500 uppercase italic tracking-tighter">{t.admin_panel}</h2>
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-black uppercase tracking-widest mt-1 italic">{t.admin_panel_desc}</p>
           </div>
-          <button onClick={onClose} className="p-4 bg-zinc-950 border border-white/5 rounded-2xl text-zinc-500 hover:text-white transition-all">
+          <button onClick={onClose} className="p-4 bg-zinc-100 dark:bg-zinc-950 border border-black/5 dark:border-white/5 rounded-2xl text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-all font-bold">
             <X size={24} />
           </button>
         </div>
@@ -2283,50 +2530,50 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
           {/* Broadcast Section */}
           <div className="space-y-6">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-500">
+              <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-600 dark:text-amber-500">
                 <Bell size={24} />
               </div>
-              <h3 className="text-lg font-black text-white">تنبيه عام للمستخدمين</h3>
+              <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.broadcast_notif}</h3>
             </div>
             
             <div className="space-y-4">
               <input 
                 type="text"
-                placeholder="عنوان التنبيه"
+                placeholder={t.broadcast_notif_title}
                 value={broadcastTitle}
                 onChange={(e) => setBroadcastTitle(e.target.value)}
-                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500/30 transition-all font-bold"
+                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold"
               />
               <textarea 
-                placeholder="رسالة التنبيه المرسلة لجميع المستخدمين..."
+                placeholder={t.broadcast_notif_msg}
                 value={broadcastMessage}
                 onChange={(e) => setBroadcastMessage(e.target.value)}
                 rows={3}
-                className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none focus:border-amber-500/30 transition-all font-bold resize-none"
+                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold resize-none"
               />
               <button 
                 onClick={handleBroadcast}
                 disabled={sending || !broadcastTitle || !broadcastMessage}
-                className="w-full py-5 bg-amber-500 text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl shadow-amber-500/10 disabled:opacity-50"
+                className="w-full py-5 bg-zinc-900 dark:bg-amber-500 text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl shadow-amber-500/10 disabled:opacity-50 italic uppercase tracking-widest text-xs"
               >
-                {sending ? 'جاري الإرسال...' : 'إرسال التنبيه الآن'}
+                {sending ? t.sending_broadcast : t.send_broadcast}
               </button>
             </div>
           </div>
 
-          <div className="w-full h-px bg-white/5"></div>
+          <div className="w-full h-px bg-black/5 dark:bg-white/5"></div>
 
           {/* Users List Section */}
           <div className="space-y-6 pb-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-500">
+                <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-600 dark:text-blue-500">
                   <Users size={24} />
                 </div>
-                <h3 className="text-lg font-black text-white">قائمة المستخدمين</h3>
+                <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.users_list}</h3>
               </div>
-              <span className="text-[10px] font-black text-zinc-500 bg-zinc-950 px-3 py-1 rounded-full border border-white/5 uppercase">
-                {users.length} مستخدم
+              <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 bg-zinc-50 dark:bg-zinc-950 px-3 py-1 rounded-full border border-black/5 dark:border-white/5 uppercase italic">
+                {users.length} {t.users_count_suffix}
               </span>
             </div>
 
@@ -2334,25 +2581,25 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
               {loading ? (
                 <div className="py-10 text-center space-y-4">
                   <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto"></div>
-                  <p className="text-xs text-zinc-500 font-bold">جاري جلب بيانات المستخدمين...</p>
+                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest leading-relaxed italic">{t.loading_users}</p>
                 </div>
               ) : (
                 users.map(u => (
-                  <div key={u.id} className="p-5 bg-zinc-950/50 rounded-[2rem] border border-white/5 space-y-5 hover:border-white/10 transition-all">
+                  <div key={u.id} className="p-5 bg-zinc-50/50 dark:bg-zinc-950/50 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-5 hover:border-blue-500/30 transition-all group">
                     <div className="flex justify-between items-start">
                       <div className="space-y-1">
-                        <p className="font-black text-white">{u.displayName}</p>
-                        <p className="text-[10px] text-zinc-500 font-mono">{u.email}</p>
+                        <p className="font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{u.displayName}</p>
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-black italic">{u.email}</p>
                       </div>
                       {u.isAdmin ? (
-                        <div className="bg-emerald-500/10 text-emerald-500 px-3 py-1 rounded-lg text-[10px] font-black border border-emerald-500/20 flex items-center gap-1.5 shadow-sm">
+                        <div className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 px-3 py-1 rounded-lg text-[10px] font-black border border-emerald-500/20 flex items-center gap-1.5 shadow-sm italic uppercase">
                           <Shield size={10} />
-                          MEMBER ADMIN
+                          {t.admin_tag || 'ADMIN'}
                         </div>
                       ) : (
-                        <div className="bg-zinc-800 text-zinc-400 px-3 py-1 rounded-lg text-[10px] font-black flex items-center gap-1.5">
+                        <div className="bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 px-3 py-1 rounded-lg text-[10px] font-black flex items-center gap-1.5 italic uppercase">
                           <UserIcon size={10} />
-                          STANDARD
+                          {t.standard_user}
                         </div>
                       )}
                     </div>
@@ -2360,33 +2607,33 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
                     <div className="flex gap-3">
                       <button 
                         onClick={async () => {
-                          const pass = prompt(`تغيير كلمة المرور للمستخدم (${u.displayName}):`);
+                          const pass = prompt(`${t.confirm_password_reset} (${u.displayName}):`);
                           if (pass && pass.length >= 6) {
                             try {
                               await api.resetUserPassword(u.id, pass);
-                              alert('تم تغيير كلمة المرور بنجاح');
+                              alert(t.password_reset_success);
                             } catch (e: any) {
-                              alert(e.message || 'فشلت العملية');
+                              alert(e.message || t.password_reset_failed);
                             }
                           } else if (pass) {
-                            alert('يجب أن تكون كلمة المرور 6 خانات على الأقل');
+                            alert(t.password_min_length);
                           }
                         }}
-                        className="flex-1 py-3 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-black text-blue-400 hover:bg-blue-400 hover:text-white transition-all active:scale-95"
+                        className="flex-1 py-3 bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 rounded-xl text-[10px] font-black text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-400 dark:hover:text-white transition-all active:scale-95 italic uppercase tracking-widest"
                       >
-                        إعادة تعيين الباسوورد
+                        {t.reset_password}
                       </button>
                       
                       {!u.isAdmin && (
                         <button 
                           onClick={async () => {
-                            if (confirm(`هل أنت متأكد من حذف المستخدم "${u.displayName}" نهائياً؟ سيتم مسح جميع بياناته.`)) {
+                            if (confirm(t.delete_user_confirm)) {
                               try {
                                 await api.deleteUser(u.id);
                                 loadUsers();
-                                alert('تم حذف المستخدم وكافة بياناته بنجاح');
+                                alert(t.delete_user_success);
                               } catch (e: any) {
-                                alert(e.message || 'فشل حذف المستخدم');
+                                alert(e.message || t.delete_user_failed);
                               }
                             }
                           }}
@@ -2407,7 +2654,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClose: () => void, onAdd: (t: Omit<Transaction, 'id'>) => void, appCurrency: string }) {
+function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacyMode }: { user: any, onClose: () => void, onAdd: (t: Omit<Transaction, 'id'>) => void, appCurrency: string, t: any, language: 'ar' | 'en', privacyMode: boolean }) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<TransactionCategory>('salary');
@@ -2450,7 +2697,8 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
     if (!convertAmount || !rates[convertFrom]) return;
     
     // Get target currency code
-    const targetCode = appCurrency === 'ر.س' ? 'SAR' : (appCurrency === 'ج.م' ? 'EGP' : appCurrency);
+    const getCode = (c: string) => c === 'ر.س' ? 'SAR' : (c === 'ج.م' ? 'EGP' : c);
+    const targetCode = getCode(appCurrency);
     const fromCode = convertFrom;
 
     if (!rates[targetCode]) return;
@@ -2486,18 +2734,31 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
       }
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
-      const prompt = `الرجاء تحليل صورة الفاتورة المرفقة واستخراج البيانات التالية بتنسيق JSON حصراً:
-      {
-        "amount": number,
-        "description": "وصف مختصر للعملية",
-        "category": "إحدى هذه القيم فقط: food, shopping, transport, health, fun, bills, home, other",
-        "wallet": "إحدى هذه القيم فقط: cash, bank"
-      }
-      ملاحظات:
-      - المبلغ يجب أن يكون رقماً.
-      - الوصف باللغة العربية.
-      - التصنيف يجب أن يكون مطابقاً للقيم الإنجليزية المذكورة.
-      - إذا لم تكن العملة واضحة، افترض أنها ${appCurrency}.`;
+      const prompt = language === 'ar' 
+        ? `الرجاء تحليل صورة الفاتورة المرفقة واستخراج البيانات التالية بتنسيق JSON حصراً:
+          {
+            "amount": number,
+            "description": "وصف مختصر للعملية",
+            "category": "إحدى هذه القيم فقط: food, shopping, transport, health, fun, bills, home, other",
+            "wallet": "إحدى هذه القيم فقط: cash, bank"
+          }
+          ملاحظات:
+          - المبلغ يجب أن يكون رقماً.
+          - الوصف باللغة العربية.
+          - التصنيف يجب أن يكون مطابقاً للقيم الإنجليزية المذكورة.
+          - إذا لم تكن العملة واضحة، افترض أنها ${appCurrency}.`
+        : `Please analyze the attached receipt image and extract the following data in JSON format exclusively:
+          {
+            "amount": number,
+            "description": "Brief description of the transaction",
+            "category": "One of these values only: food, shopping, transport, health, fun, bills, home, other",
+            "wallet": "One of these values only: cash, bank"
+          }
+          Notes:
+          - The amount must be a number.
+          - Description should be descriptive.
+          - Category must exactly match the provided English values.
+          - If the currency is not clear, assume it is ${appCurrency}.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
@@ -2540,9 +2801,9 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
       if (data.wallet) setWallet(data.wallet);
     } catch (err: any) {
       console.error("Receipt Analysis Error:", err);
-      let errorMsg = "حدث خطأ أثناء تحليل الصورة. تأكد من وضوح الصورة وحاول مرة أخرى.";
+      let errorMsg = t.receipt_analysis_error;
       if (err.message?.includes("API_KEY_INVALID")) {
-        errorMsg = "خطأ في مفتاح API. يرجى التحقق من الإعدادات.";
+        errorMsg = t.api_key_error;
       }
       setAnalysisError(errorMsg);
     } finally {
@@ -2556,8 +2817,8 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
     
     // Auto-description for transfers
     const finalDescription = type === 'transfer' 
-      ? `تحويل من ${WALLET_LABELS[wallet]} إلى ${WALLET_LABELS[toWallet]}`
-      : description || CATEGORIES[category].label;
+      ? `${t.transfer_from} ${t[WALLET_LABELS[wallet]]} ${t.to_label} ${t[WALLET_LABELS[toWallet]]}`
+      : description || t[CATEGORIES[category].label];
 
     if (isSubscription) {
       try {
@@ -2593,22 +2854,21 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: '100%' }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      className="fixed inset-0 bg-zinc-950 z-50 flex flex-col p-6 overflow-y-auto"
-      dir="rtl"
+      className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 z-50 flex flex-col p-6 overflow-y-auto"
     >
       <div className="flex justify-between items-center mb-8">
-        <button onClick={onClose} className="bg-zinc-900 border border-white/5 p-3 rounded-2xl text-zinc-500 active:bg-zinc-800">
+        <button onClick={onClose} className="bg-zinc-100 dark:bg-zinc-900 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-500 active:bg-zinc-200 dark:active:bg-zinc-800">
           <X size={24} />
         </button>
-        <div className="flex p-1 bg-zinc-900 rounded-2xl border border-white/5">
-           {(['expense', 'income', 'transfer'] as TransactionType[]).map((t) => (
+        <div className="flex p-1 bg-zinc-100 dark:bg-zinc-900 rounded-2xl border border-black/5 dark:border-white/5">
+           {(['expense', 'income', 'transfer'] as TransactionType[]).map((tr) => (
              <button
-              key={t}
+              key={tr}
               type="button"
-              onClick={() => setType(t)}
-              className={`px-4 py-2 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${type === t ? 'bg-white text-zinc-950 shadow-lg' : 'text-zinc-500'}`}
+              onClick={() => setType(tr)}
+              className={`px-4 py-2 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${type === tr ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-white shadow-lg' : 'text-zinc-500'}`}
              >
-               {t === 'expense' ? 'مصروف' : t === 'income' ? 'دخل' : 'تحويل'}
+               {tr === 'expense' ? t.expense : tr === 'income' ? t.income : t.transfer}
              </button>
            ))}
         </div>
@@ -2623,16 +2883,17 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
           <button 
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className={`p-3 rounded-2xl border border-white/5 transition-all ${isAnalyzing ? 'bg-amber-500 text-zinc-950 animate-pulse' : 'bg-zinc-900 text-zinc-500 active:bg-zinc-800'}`}
+            className={`p-3 rounded-2xl border border-black/5 dark:border-white/5 transition-all ${isAnalyzing ? 'bg-amber-500 text-zinc-950 animate-pulse' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500 active:bg-zinc-200 dark:active:bg-zinc-800'}`}
+            title={t.analyze_receipt}
           >
             {isAnalyzing ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
           </button>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="flex-1 flex flex-col space-y-10 max-w-lg mx-auto w-full">
+      <form onSubmit={handleSubmit} className="flex-1 flex flex-col space-y-10 max-w-lg mx-auto w-full group">
         {previewImage && (
-          <div className="relative w-full aspect-video rounded-[2rem] overflow-hidden border border-white/10 group">
+          <div className="relative w-full aspect-video rounded-[2.5rem] overflow-hidden border border-black/5 dark:border-white/10 group shadow-lg">
             <img src={previewImage} className="w-full h-full object-cover" alt="Receipt Preview" />
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               <button 
@@ -2646,7 +2907,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
             {isAnalyzing && (
               <div className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
                 <Loader2 size={40} className="text-amber-500 animate-spin" />
-                <p className="text-xs font-black text-amber-500 uppercase tracking-widest animate-pulse">جاري فحص الفاتورة بذكاء...</p>
+                <p className="text-xs font-black text-amber-500 uppercase tracking-widest animate-pulse">{t.analyzing_receipt_ai}</p>
               </div>
             )}
             {analysisError && (
@@ -2660,7 +2921,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
                   onClick={() => analyzeReceipt(previewImage!)}
                   className="mt-2 px-6 py-2 bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-500/20"
                 >
-                  إعادة المحاولة
+                  {t.retry}
                 </button>
               </div>
             )}
@@ -2668,13 +2929,13 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
         )}
         <div className="space-y-4 text-center relative">
           <div className="flex justify-between items-center px-1">
-            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">أدخل المبلغ</label>
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">{t.amount_label}</label>
             <button 
               type="button"
               onClick={() => setShowConverter(!showConverter)}
-              className="text-[10px] font-black text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20"
+              className="text-[10px] font-black text-amber-600 dark:text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full border border-black/5 dark:border-amber-500/20"
             >
-              محول العملات {showConverter ? '↑' : '↓'}
+              {t.currency_converter} {showConverter ? '↑' : '↓'}
             </button>
           </div>
 
@@ -2682,14 +2943,14 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
             <motion.div 
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
-              className="bg-zinc-900 p-5 rounded-[2rem] border border-amber-500/10 space-y-4 shadow-2xl shadow-amber-500/5 overflow-hidden"
+              className="bg-white dark:bg-zinc-900 p-5 rounded-[2.5rem] border border-black/5 dark:border-amber-500/10 space-y-4 shadow-2xl shadow-amber-500/5 overflow-hidden"
             >
               <div className="flex gap-3">
                 <div className="flex-1 relative group">
                   <input 
-                    type="text"
+                    type={privacyMode ? "password" : "text"}
                     inputMode="decimal"
-                    placeholder="المبلغ المراد تحويله"
+                    placeholder={t.convert_amount_placeholder}
                     value={convertAmount}
                     onChange={(e) => {
                       const val = convertArabicNumerals(e.target.value);
@@ -2697,14 +2958,14 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
                         setConvertAmount(val);
                       }
                     }}
-                    className="w-full bg-zinc-950 border border-white/5 p-4 rounded-2xl text-white outline-none text-lg font-black focus:border-amber-500/50 transition-all text-center placeholder:text-zinc-800 placeholder:text-sm"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none text-lg font-black focus:border-amber-500/50 transition-all text-center placeholder:text-zinc-300 dark:placeholder:text-zinc-800 placeholder:text-sm shadow-inner"
                   />
                 </div>
                 <div className="w-24 relative">
                   <select 
                     value={convertFrom}
                     onChange={(e) => setConvertFrom(e.target.value)}
-                    className="w-full h-full bg-zinc-950 border border-white/5 p-3 rounded-2xl text-white outline-none text-xs font-black appearance-none cursor-pointer text-center focus:border-amber-500/50 transition-all"
+                    className="w-full h-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-3 rounded-2xl text-zinc-900 dark:text-white outline-none text-xs font-black appearance-none cursor-pointer text-center focus:border-amber-500/50 transition-all font-bold"
                   >
                     {['USD', 'SAR', 'EGP', 'AED', 'KWD', 'EUR', 'TRY', 'GBP'].map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -2714,7 +2975,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-600">
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-400">
                     <ChevronDown size={12} />
                   </div>
                 </div>
@@ -2722,20 +2983,20 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
               <button 
                 type="button"
                 onClick={handleConvert}
-                className="w-full bg-amber-500 text-zinc-950 py-4 rounded-2xl font-black text-sm shadow-lg shadow-amber-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ring-4 ring-amber-500/10"
+                className="w-full bg-amber-500 text-zinc-950 py-4 rounded-2xl font-black text-sm shadow-lg shadow-amber-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ring-4 ring-amber-500/10 italic"
               >
-                تطبيق التحويل إلى {appCurrency}
+                {t.apply_conversion} {getDisplayCurrency(appCurrency, language)}
               </button>
             </motion.div>
           )}
 
           <div className="flex items-center justify-center gap-3">
              <input 
-              type="text" 
+              type={privacyMode ? "password" : "text"} 
               autoFocus
               inputMode="decimal"
               placeholder="0.00"
-              className="w-full text-7xl font-black bg-transparent border-none outline-none focus:ring-0 placeholder:text-zinc-900 text-center tabular-nums text-white"
+              className="w-full text-7xl font-black bg-transparent border-none outline-none focus:ring-0 placeholder:text-zinc-200 dark:placeholder:text-zinc-900 text-center tabular-nums text-zinc-900 dark:text-white italic tracking-tighter"
               value={amount}
               onChange={(e) => {
                 const val = convertArabicNumerals(e.target.value);
@@ -2744,13 +3005,13 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
                 }
               }}
             />
-            <span className="text-2xl font-bold text-zinc-600">{appCurrency}</span>
+            <span className="text-2xl font-black text-zinc-400 dark:text-zinc-600 uppercase italic">{getDisplayCurrency(appCurrency, language)}</span>
           </div>
         </div>
 
         {type !== 'transfer' && (
           <div className="space-y-4">
-            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">التصنيف</label>
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">{t.category_label}</label>
             <div className="grid grid-cols-4 gap-4">
               {(Object.keys(CATEGORIES) as TransactionCategory[])
                 .filter(catKey => {
@@ -2770,12 +3031,14 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
                       key={catKey}
                       type="button"
                       onClick={() => setCategory(catKey)}
-                      className={`flex flex-col items-center gap-3 p-4 rounded-3xl transition-all border border-transparent ${
-                        isSelected ? 'bg-white text-zinc-950 scale-110 shadow-2xl' : 'bg-zinc-900 text-zinc-500 border-white/5 hover:bg-zinc-800'
+                      className={`flex flex-col items-center gap-3 p-4 rounded-3xl transition-all border ${
+                        isSelected 
+                          ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 scale-110 shadow-2xl border-transparent' 
+                          : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-black/5 dark:border-white/5 hover:bg-zinc-100 dark:hover:bg-zinc-800'
                       }`}
                     >
                       <cat.icon size={26} strokeWidth={isSelected ? 2.5 : 2} />
-                      <span className="text-[9px] font-black uppercase tracking-tighter">{cat.label}</span>
+                      <span className="text-[9px] font-black uppercase tracking-tighter italic">{t[cat.label]}</span>
                     </button>
                   );
                 })}
@@ -2785,50 +3048,54 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
 
         <div className="flex gap-6">
           <div className="flex-1 space-y-4">
-            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">
-              {type === 'transfer' ? 'من حساب' : 'الحساب'}
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">
+              {type === 'transfer' ? t.from_account_label : t.account_label}
             </label>
-            <div className={`p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5 grid ${type === 'transfer' ? 'grid-cols-4 px-1' : 'grid-cols-2'}`}>
-                {(type === 'transfer' ? ['cash', 'bank', 'savings', 'emergency'] : ['cash', 'bank']).map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={() => setWallet(w as WalletType)}
-                    className={`py-4 text-[9px] font-black rounded-2xl transition-all ${wallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
-                  >
-                    {WALLET_LABELS[w]}
-                  </button>
-                ))}
+            <div className="p-1 bg-zinc-50 dark:bg-zinc-900 rounded-[1.5rem] border border-black/5 dark:border-white/5 grid shadow-inner">
+                <div className={`grid ${type === 'transfer' ? 'grid-cols-4 px-1' : 'grid-cols-2'}`}>
+                  {(type === 'transfer' ? ['cash', 'bank', 'savings', 'emergency'] : ['cash', 'bank']).map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      onClick={() => setWallet(w as WalletType)}
+                      className={`py-4 text-[9px] font-black rounded-2xl transition-all uppercase tracking-widest italic ${wallet === w ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+                    >
+                      {t[WALLET_LABELS[w]]}
+                    </button>
+                  ))}
+                </div>
             </div>
           </div>
 
           {type === 'transfer' && (
             <div className="flex-1 space-y-4">
-              <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">إلى حساب</label>
-              <div className="p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5 grid grid-cols-4 px-1">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">{t.to_account_label}</label>
+              <div className="p-1 bg-zinc-50 dark:bg-zinc-900 rounded-[1.5rem] border border-black/5 dark:border-white/5 grid shadow-inner">
+                <div className="grid grid-cols-4 px-1">
                   {(['cash', 'bank', 'savings', 'emergency'] as WalletType[]).map((w) => (
                     <button
                       key={w}
                       type="button"
                       onClick={() => setToWallet(w)}
-                      className={`py-4 text-[9px] font-black rounded-2xl transition-all ${toWallet === w ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}
+                      className={`py-4 text-[9px] font-black rounded-2xl transition-all uppercase tracking-widest italic ${toWallet === w ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
                     >
-                      {WALLET_LABELS[w]}
+                      {t[WALLET_LABELS[w]]}
                     </button>
                   ))}
+                </div>
               </div>
             </div>
           )}
 
           {type === 'expense' && (
             <div className="flex-shrink-0 space-y-4 min-w-[100px]">
-               <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">التكرار</label>
+               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">{t.frequency_label}</label>
                <button
                 type="button"
                 onClick={() => setIsSubscription(!isSubscription)}
-                className={`w-full py-4 text-xs font-bold rounded-2xl transition-all border ${isSubscription ? 'bg-white text-zinc-950 border-white' : 'bg-zinc-900 text-zinc-600 border-white/5'}`}
+                className={`w-full py-4 text-xs font-black rounded-2xl transition-all border uppercase tracking-widest italic ${isSubscription ? 'bg-white dark:bg-white text-zinc-950 border-transparent shadow-xl' : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-black/5 dark:border-white/5'}`}
                >
-                 {isSubscription ? 'اشتراك' : 'مرة واحدة'}
+                 {isSubscription ? t.subscription : t.one_time}
                </button>
             </div>
           )}
@@ -2836,32 +3103,31 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
 
         {type === 'expense' && (
           <div className="space-y-4">
-            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">الأهمية</label>
-            <div className="flex p-1 bg-zinc-900 rounded-[1.5rem] border border-white/5">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">{t.necessity_label}</label>
+            <div className="flex p-1 bg-zinc-50 dark:bg-zinc-900 rounded-[1.5rem] border border-black/5 dark:border-white/5 shadow-inner">
                 <button
                 type="button"
                 onClick={() => setNecessity('necessity')}
-                className={`flex-1 py-4 text-xs font-bold rounded-2xl transition-all ${necessity === 'necessity' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                className={`flex-1 py-4 text-xs font-black rounded-2xl transition-all uppercase tracking-widest italic ${necessity === 'necessity' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
                 >
-                  {NECESSITY_LABELS.necessity}
+                  {t[NECESSITY_LABELS.necessity]}
                 </button>
                 <button
                 type="button"
                 onClick={() => setNecessity('luxury')}
-                className={`flex-1 py-4 text-xs font-bold rounded-2xl transition-all ${necessity === 'luxury' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                className={`flex-1 py-4 text-xs font-black rounded-2xl transition-all uppercase tracking-widest italic ${necessity === 'luxury' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
                 >
-                  {NECESSITY_LABELS.luxury}
+                  {t[NECESSITY_LABELS.luxury]}
                 </button>
             </div>
           </div>
         )}
 
-
         <div className="space-y-4">
-           <label className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">الوصف</label>
+           <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest px-1">{t.desc_label}</label>
            <input 
-            placeholder={type === 'transfer' ? 'تحويل مبلغ...' : type === 'income' ? 'راتب الشهر، مكافأة، مبيعات...' : 'اشتريت قهوة، تسوقت من العثيم...'}
-            className="w-full p-6 bg-zinc-900 rounded-3xl border border-white/5 outline-none focus:ring-4 focus:ring-white/5 text-lg text-white font-bold"
+            placeholder={type === 'transfer' ? t.desc_transfer_placeholder : type === 'income' ? t.desc_income_placeholder : t.desc_expense_placeholder}
+            className="w-full p-6 bg-white dark:bg-zinc-900 rounded-3xl border border-black/5 dark:border-white/5 outline-none focus:ring-4 focus:ring-zinc-100 dark:focus:ring-white/5 text-lg text-zinc-900 dark:text-white font-bold shadow-sm"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -2871,13 +3137,13 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency }: { user: any, onClo
           <button 
             type="submit"
             disabled={!amount}
-            className={`w-full py-6 rounded-[2rem] font-black text-xl shadow-2xl transition-all transform active:scale-95 ${
-              !amount ? 'bg-zinc-900 text-zinc-800' : 'bg-white text-zinc-950 shadow-white/10 ring-8 ring-zinc-950'
+            className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all transform active:scale-95 italic tracking-tight ${
+              !amount ? 'bg-zinc-100 dark:bg-zinc-900 text-zinc-300 dark:text-zinc-800 cursor-not-allowed' : 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-white/10 ring-8 ring-zinc-50 dark:ring-zinc-950'
             }`}
           >
-            تأكيد العملية
+            {t.confirm_transaction}
           </button>
-          <p className="text-center text-[10px] font-bold text-zinc-600 uppercase tracking-widest pb-4">سيتم حفظ العملية سحابياً فورياً</p>
+          <p className="text-center text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest pb-8 italic">{t.cloud_save_notice}</p>
         </div>
       </form>
     </motion.div>

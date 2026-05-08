@@ -68,6 +68,9 @@ export interface UserProfile {
   hasSeenTutorial?: boolean;
   isAdmin?: boolean;
   siriToken?: string;
+  theme?: 'dark' | 'light';
+  language?: 'ar' | 'en';
+  privacyMode?: boolean;
 }
 
 export interface AppNotification {

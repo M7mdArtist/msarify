@@ -35,7 +35,9 @@ db.exec(`
     emergencyFund REAL DEFAULT 0,
     savingsFund REAL DEFAULT 0,
     hasSeenTutorial INTEGER DEFAULT 0,
-    isAdmin INTEGER DEFAULT 0
+    isAdmin INTEGER DEFAULT 0,
+    theme TEXT DEFAULT 'dark',
+    language TEXT DEFAULT 'ar'
   );
 `);
 
@@ -58,6 +60,14 @@ try {
 
 try {
   db.exec("ALTER TABLE users ADD COLUMN isAdmin INTEGER DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ar'");
 } catch (e) {}
 
 try {
@@ -319,7 +329,18 @@ async function startServer() {
       `).run(id, displayName, email, hashedPassword);
       
       const token = jwt.sign({ id, email, displayName }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ token, user: { id, email, displayName, hasSeenTutorial: 0, isAdmin: 0 } });
+      res.json({ 
+        token, 
+        user: { 
+          id, 
+          email, 
+          displayName, 
+          hasSeenTutorial: 0, 
+          isAdmin: 0,
+          theme: 'dark',
+          language: 'ar'
+        } 
+      });
     } catch (err: any) {
       if (err.message.includes("UNIQUE constraint failed")) {
         return res.status(400).json({ error: "البريد الإلكتروني مسجل مسبقاً" });
@@ -337,7 +358,18 @@ async function startServer() {
       }
       
       const token = jwt.sign({ id: user.id, email: user.email, displayName: user.displayName }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ token, user: { id: user.id, email: user.email, displayName: user.displayName, hasSeenTutorial: !!user.hasSeenTutorial, isAdmin: !!user.isAdmin } });
+      res.json({ 
+        token, 
+        user: { 
+          id: user.id, 
+          email: user.email, 
+          displayName: user.displayName, 
+          hasSeenTutorial: !!user.hasSeenTutorial, 
+          isAdmin: !!user.isAdmin,
+          theme: user.theme || 'dark',
+          language: user.language || 'ar'
+        } 
+      });
     } catch (err) {
       res.status(500).json({ error: "خطأ في تسجيل الدخول" });
     }
@@ -384,7 +416,7 @@ async function startServer() {
 
   // User Routes
   app.get("/api/users/:uid", (req, res) => {
-    const user = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, isAdmin, siriToken FROM users WHERE id = ?").get(req.params.uid);
+    const user = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, isAdmin, siriToken, theme, language FROM users WHERE id = ?").get(req.params.uid);
     if (user) {
       user.hasSeenTutorial = !!user.hasSeenTutorial;
       user.isAdmin = !!user.isAdmin;
@@ -393,7 +425,7 @@ async function startServer() {
   });
 
   app.post("/api/users", (req, res) => {
-    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial } = req.body;
+    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, theme, language } = req.body;
     db.prepare(`
         UPDATE users SET
           displayName = COALESCE(?, displayName),
@@ -404,9 +436,11 @@ async function startServer() {
           currency = COALESCE(?, currency),
           emergencyFund = COALESCE(?, emergencyFund),
           savingsFund = COALESCE(?, savingsFund),
-          hasSeenTutorial = COALESCE(?, hasSeenTutorial)
+          hasSeenTutorial = COALESCE(?, hasSeenTutorial),
+          theme = COALESCE(?, theme),
+          language = COALESCE(?, language)
         WHERE id = ?
-    `).run(displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, id);
+    `).run(displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, theme, language, id);
     res.json({ status: "ok" });
   });
 
