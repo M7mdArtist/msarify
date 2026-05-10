@@ -81,3 +81,20 @@ export interface AppNotification {
   isRead: boolean;
   userId: string;
 }
+
+export type LoanType = 'borrowed' | 'lent';
+export type LoanStatus = 'active' | 'paid' | 'overdue';
+
+export interface Loan {
+  id: string;
+  amount: number;
+  remainingAmount: number;
+  personName: string;
+  description: string;
+  type: LoanType;
+  status: LoanStatus;
+  dueDate: string;
+  startDate: string;
+  userId: string;
+  wallet: WalletType;
+}

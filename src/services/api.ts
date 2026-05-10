@@ -123,6 +123,50 @@ export const api = {
   async deleteNotification(id: string): Promise<void> {
     await fetch(`${API_BASE}/notifications/${id}`, { method: "DELETE" });
   },
+
+  // Loans
+  async getLoans(uid: string): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/loans/${uid}`);
+    return res.json();
+  },
+
+  async saveLoan(loan: any): Promise<void> {
+    await fetch(`${API_BASE}/loans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(loan),
+    });
+  },
+
+  async repayLoan(id: string, amount: number): Promise<void> {
+    await fetch(`${API_BASE}/loans/${id}/repay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    });
+  },
+
+  async deleteLoan(id: string): Promise<void> {
+    await fetch(`${API_BASE}/loans/${id}`, { method: "DELETE" });
+  },
+
+  // Recurring Transactions
+  async getRecurring(uid: string): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/recurring/${uid}`);
+    return res.json();
+  },
+
+  async saveRecurring(recurring: any): Promise<void> {
+    await fetch(`${API_BASE}/recurring`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(recurring),
+    });
+  },
+
+  async deleteRecurring(id: string): Promise<void> {
+    await fetch(`${API_BASE}/recurring/${id}`, { method: "DELETE" });
+  },
   
   // Admin
   async getAdminUsers(): Promise<any[]> {

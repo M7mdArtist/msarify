@@ -190,6 +190,11 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [exchangeRates, setExchangeRates] = useState<any>({});
+  const [loans, setLoans] = useState<any[]>([]);
+  const [recurring, setRecurring] = useState<any[]>([]);
+  const [showLoanModal, setShowLoanModal] = useState<{ show: boolean, loan?: any }>({ show: false });
+  const [showRepayModal, setShowRepayModal] = useState<{ show: boolean, loan?: any }>({ show: false });
+  const [showRecurringModal, setShowRecurringModal] = useState<{ show: boolean, item?: any }>({ show: false });
   const [privacyMode, setPrivacyMode] = useState(() => {
     const stored = localStorage.getItem('user');
     if (stored) {
@@ -239,15 +244,28 @@ export default function App() {
   const refreshData = async () => {
     if (!user) return;
     try {
-      const [uProfile, txs, subs, snaps, notices] = await Promise.all([
+      const results = await Promise.allSettled([
         api.getUser(user.id),
         api.getTransactions(user.id),
         api.getSubscriptions(user.id),
         api.getSnapshots(user.id),
-        api.getNotifications(user.id)
+        api.getNotifications(user.id),
+        api.getLoans(user.id),
+        api.getRecurring(user.id)
       ]);
 
-      if (uProfile) {
+      const [
+        uProfileRes, 
+        txsRes, 
+        subsRes, 
+        snapsRes, 
+        noticesRes, 
+        loanListRes, 
+        recurringListRes
+      ] = results;
+
+      if (uProfileRes.status === 'fulfilled' && uProfileRes.value) {
+        const uProfile = uProfileRes.value;
         setUserBudget(uProfile.budgetThreshold || 0);
         
         // Preserve currency if it exists in profile, otherwise use language-based default
@@ -268,6 +286,9 @@ export default function App() {
           if (uProfile.theme && uProfile.theme !== theme) {
             setTheme(uProfile.theme as 'dark' | 'light');
           }
+          if (uProfile.privacyMode !== undefined && !!uProfile.privacyMode !== privacyMode) {
+            setPrivacyMode(!!uProfile.privacyMode);
+          }
         }
 
         setInitialBalances({
@@ -280,12 +301,14 @@ export default function App() {
         });
       }
 
-      setTransactions(txs);
-      setSubscriptions(subs);
-      setSnapshots(snaps);
-      setNotifications(notices);
+      if (txsRes.status === 'fulfilled') setTransactions(txsRes.value || []);
+      if (subsRes.status === 'fulfilled') setSubscriptions(subsRes.value || []);
+      if (snapsRes.status === 'fulfilled') setSnapshots(snapsRes.value || []);
+      if (noticesRes.status === 'fulfilled') setNotifications(noticesRes.value || []);
+      if (loanListRes.status === 'fulfilled') setLoans(loanListRes.value || []);
+      if (recurringListRes.status === 'fulfilled') setRecurring(recurringListRes.value || []);
     } catch (err) {
-      console.error("Error fetching data from SQL:", err);
+      console.error("Data refresh failed", err);
     }
   };
 
@@ -1126,6 +1149,204 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
+
+            <div className="space-y-6 pt-4">
+              <div className="flex justify-between items-center px-1">
+                <h3 className="text-lg font-black text-zinc-900 dark:text-white italic">{t.loans}</h3>
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowLoanModal({ show: true })}
+                  className="px-4 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl text-[10px] font-black uppercase tracking-widest"
+                >
+                  {t.add_loan}
+                </motion.button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-emerald-500/5 p-4 rounded-3xl border border-emerald-500/10">
+                  <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest">{t.total_lent}</p>
+                  <p className="text-xl font-black text-zinc-900 dark:text-white mt-1">
+                    {formatAmount(loans.filter(l => l.type === 'lent' && l.status !== 'paid').reduce((acc, curr) => acc + curr.remainingAmount, 0), privacyMode)}
+                    <span className="text-[10px] opacity-40 ml-1">{displayCurrency}</span>
+                  </p>
+                </div>
+                <div className="bg-rose-500/5 p-4 rounded-3xl border border-rose-500/10">
+                  <p className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-widest">{t.total_borrowed}</p>
+                  <p className="text-xl font-black text-zinc-900 dark:text-white mt-1">
+                    {formatAmount(loans.filter(l => l.type === 'borrowed' && l.status !== 'paid').reduce((acc, curr) => acc + curr.remainingAmount, 0), privacyMode)}
+                    <span className="text-[10px] opacity-40 ml-1">{displayCurrency}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {loans.filter(l => l.status !== 'paid').length === 0 ? (
+                  <div className="py-10 text-center space-y-2 opacity-50 bg-zinc-100 dark:bg-white/[0.02] rounded-[3rem] border border-zinc-200 dark:border-white/5">
+                    <p className="text-xs font-black uppercase tracking-widest">{t.no_loans}</p>
+                  </div>
+                ) : (
+                  loans.filter(l => l.status !== 'paid').map(loan => (
+                    <motion.div 
+                      key={loan.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-white dark:bg-zinc-900 p-5 rounded-[2.5rem] border border-black/5 dark:border-white/5 shadow-sm space-y-4"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${loan.type === 'lent' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                            {loan.type === 'lent' ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />}
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-zinc-900 dark:text-white">{loan.personName}</h4>
+                            <p className="text-[10px] font-bold text-zinc-500 leading-none">{loan.description}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-black text-zinc-900 dark:text-white tabular-nums">
+                            {formatAmount(loan.remainingAmount, privacyMode)}
+                            <span className="text-[10px] opacity-40 ml-1">{displayCurrency}</span>
+                          </p>
+                          <p className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">{t.due_date}: {new Date(loan.dueDate).toLocaleDateString(language === 'ar' ? 'ar-SA' : 'en-US')}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[9px] font-black uppercase tracking-widest opacity-40">
+                          <span>{t.amount_remaining}</span>
+                          <span>{Math.round(((loan.amount - loan.remainingAmount) / loan.amount) * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-zinc-100 dark:bg-white/5 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${((loan.amount - loan.remainingAmount) / loan.amount) * 100}%` }}
+                            className={`h-full ${loan.type === 'lent' ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => setShowRepayModal({ show: true, loan })}
+                          className="flex-1 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-lg"
+                        >
+                          {t.repay}
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (confirm(t.delete_user_confirm)) {
+                              api.deleteLoan(loan.id).then(refreshData);
+                            }
+                          }}
+                          className="px-4 bg-rose-500/10 text-rose-500 rounded-xl"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-6 pt-4">
+              <div className="flex justify-between items-center px-1">
+                <h3 className="text-lg font-black text-zinc-900 dark:text-white italic">{t.recurring_tx}</h3>
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowRecurringModal({ show: true })}
+                  className="px-4 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl text-[10px] font-black uppercase tracking-widest"
+                >
+                  {t.add_recurring}
+                </motion.button>
+              </div>
+
+              <div className="space-y-3">
+                {recurring.length === 0 ? (
+                  <div className="py-10 text-center space-y-2 opacity-50 bg-zinc-100 dark:bg-white/[0.02] rounded-[3rem] border border-zinc-200 dark:border-white/5">
+                    <p className="text-xs font-black uppercase tracking-widest">{t.no_recurring}</p>
+                  </div>
+                ) : (
+                  recurring.map(item => (
+                    <motion.div 
+                      key={item.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-white dark:bg-zinc-900 p-5 rounded-[2.5rem] border border-black/5 dark:border-white/5 shadow-sm"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${item.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                            {item.type === 'income' ? <TrendingUp size={20} /> : <CreditCard size={20} />}
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-zinc-900 dark:text-white">{item.description}</h4>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{t[item.frequency]}</span>
+                              <span className="w-1 h-1 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                              <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{t[WALLET_LABELS[item.wallet]]}</span>
+                              <span className="w-1 h-1 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                              <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${item.autoProcess ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                                {item.autoProcess ? t.auto_confirm : t.manual_confirm}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <button 
+                            onClick={() => setShowRecurringModal({ show: true, item })}
+                            className="p-2 text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors"
+                          >
+                            <Settings size={16} />
+                          </button>
+                          <div className="text-right">
+                            <p className="text-lg font-black text-zinc-900 dark:text-white tabular-nums">
+                              {formatAmount(item.amount, privacyMode)}
+                              <span className="text-[10px] opacity-40 ml-1">{displayCurrency}</span>
+                            </p>
+                          </div>
+                          <button 
+                            onClick={() => {
+                              if (confirm(t.delete_user_confirm)) {
+                                api.deleteRecurring(item.id).then(refreshData);
+                              }
+                            }}
+                            className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-full transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <button 
+                        onClick={async () => {
+                          try {
+                            await api.addTransaction({
+                              id: crypto.randomUUID(),
+                              amount: item.amount,
+                              description: item.description,
+                              category: item.category,
+                              type: item.type,
+                              wallet: item.wallet,
+                              date: new Date().toISOString(),
+                              userId: user.id
+                            });
+                            refreshData();
+                            alert(language === 'ar' ? 'تم تسجيل العملية بنجاح' : 'Transaction recorded successfully');
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }}
+                        className="w-full mt-4 py-2 bg-zinc-50 dark:bg-white/5 text-zinc-900 dark:text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+                      >
+                        {t.confirm_transaction}
+                      </button>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -1558,6 +1779,39 @@ export default function App() {
             onUpdateCurrency={handleUpdateCurrency}
             onClose={() => setShowMasterBalanceModal(false)}
             onOpenAdmin={() => setShowAdminPanel(true)}
+            onRefresh={refreshData}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
+          />
+        )}
+        {showLoanModal.show && (
+          <LoanModal 
+            user={user}
+            loan={showLoanModal.loan}
+            onClose={() => setShowLoanModal({ show: false })}
+            onRefresh={refreshData}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
+          />
+        )}
+        {showRepayModal.show && showRepayModal.loan && (
+          <RepayModal 
+            user={user}
+            loan={showRepayModal.loan}
+            onClose={() => setShowRepayModal({ show: false })}
+            onRefresh={refreshData}
+            t={t}
+            language={language}
+            privacyMode={privacyMode}
+          />
+        )}
+        {showRecurringModal.show && (
+          <RecurringModal 
+            user={user}
+            item={showRecurringModal.item}
+            onClose={() => setShowRecurringModal({ show: false })}
             onRefresh={refreshData}
             t={t}
             language={language}
@@ -3145,6 +3399,439 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
           </button>
           <p className="text-center text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest pb-8 italic">{t.cloud_save_notice}</p>
         </div>
+      </form>
+    </motion.div>
+  );
+}
+
+function LoanModal({ user, loan, onClose, onRefresh, t, language, privacyMode }: { 
+  user: any, 
+  loan?: any, 
+  onClose: () => void, 
+  onRefresh: () => void, 
+  t: any, 
+  language: 'ar' | 'en',
+  privacyMode: boolean
+}) {
+  const [personName, setPersonName] = useState(loan?.personName || '');
+  const [amount, setAmount] = useState(loan?.amount?.toString() || '');
+  const [description, setDescription] = useState(loan?.description || '');
+  const [type, setType] = useState<'borrowed' | 'lent'>(loan?.type || 'borrowed');
+  const [wallet, setWallet] = useState<WalletType>(loan?.wallet || 'bank');
+  const [dueDate, setDueDate] = useState(loan?.dueDate?.split('T')[0] || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!amount || !personName) return;
+
+    setSaving(true);
+    try {
+      const amountNum = parseFloat(amount);
+      const isNew = !loan;
+      const loanId = loan?.id || Math.random().toString(36).substr(2, 9);
+      
+      const loanData = {
+        id: loanId,
+        amount: amountNum,
+        remainingAmount: isNew ? amountNum : loan.remainingAmount,
+        personName,
+        description,
+        type,
+        status: 'active',
+        dueDate: new Date(dueDate).toISOString(),
+        startDate: loan?.startDate || new Date().toISOString(),
+        wallet,
+        userId: user.id
+      };
+
+      await api.saveLoan(loanData);
+
+      // If it's a new loan, record a transaction
+      if (isNew) {
+        await api.addTransaction({
+          id: Math.random().toString(36).substr(2, 9),
+          amount: amountNum,
+          description: `${type === 'lent' ? t.loan_to : t.borrowed_from} ${personName}: ${description}`,
+          category: 'other',
+          type: type === 'lent' ? 'expense' : 'income',
+          wallet,
+          date: new Date().toISOString(),
+          userId: user.id
+        });
+      }
+
+      onRefresh();
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: '100%' }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: '100%' }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-100/90 dark:bg-zinc-950/90 backdrop-blur-xl"
+    >
+      <form onSubmit={handleSubmit} className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-[3rem] p-8 border border-black/5 dark:border-white/5 shadow-2xl relative space-y-6">
+        <button type="button" onClick={onClose} className="absolute top-6 right-6 p-2 bg-zinc-100 dark:bg-zinc-800 rounded-full text-zinc-400"><X size={20} /></button>
+        
+        <div className="space-y-1">
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white italic tracking-tighter">{t.add_loan}</h2>
+          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{t.cloud_save_notice}</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-2xl">
+            {(['borrowed', 'lent'] as const).map(lt => (
+              <button
+                key={lt}
+                type="button"
+                onClick={() => setType(lt)}
+                className={`flex-1 py-3 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${type === lt ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+              >
+                {t[lt]}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.loan_person_name}</label>
+            <input 
+              required
+              className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none"
+              value={personName}
+              onChange={(e) => setPersonName(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.loan_amount}</label>
+            <input 
+              required
+              type={privacyMode ? "password" : "text"}
+              inputMode="decimal"
+              className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none"
+              value={amount}
+              onChange={(e) => setAmount(convertArabicNumerals(e.target.value))}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.due_date}</label>
+              <input 
+                type="date"
+                required
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none text-[10px]"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.loan_wallet}</label>
+              <select
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none text-[10px]"
+                value={wallet}
+                onChange={(e) => setWallet(e.target.value as WalletType)}
+              >
+                {(['bank', 'cash'] as const).map(w => (
+                  <option key={w} value={w}>{t[WALLET_LABELS[w]]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.loan_description}</label>
+            <input 
+              className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <button 
+          type="submit"
+          disabled={saving}
+          className="w-full py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl font-black uppercase tracking-widest shadow-xl disabled:opacity-50"
+        >
+          {saving ? t.saving : t.save}
+        </button>
+      </form>
+    </motion.div>
+  );
+}
+
+function RepayModal({ user, loan, onClose, onRefresh, t, language, privacyMode }: { 
+  user: any, 
+  loan: any, 
+  onClose: () => void, 
+  onRefresh: () => void, 
+  t: any, 
+  language: 'ar' | 'en',
+  privacyMode: boolean
+}) {
+  const [amount, setAmount] = useState(loan.remainingAmount.toString());
+  const [wallet, setWallet] = useState<WalletType>('bank');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) return;
+
+    setSaving(true);
+    try {
+      await api.repayLoan(loan.id, amountNum);
+      await api.addTransaction({
+        id: crypto.randomUUID(),
+        amount: amountNum,
+        description: `${t.loan_category_label}: ${loan.personName}`,
+        category: 'other',
+        type: loan.type === 'borrowed' ? 'expense' : 'income',
+        wallet,
+        date: new Date().toISOString(),
+        userId: user.id
+      });
+      onRefresh();
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-zinc-100/80 dark:bg-zinc-950/80 backdrop-blur-md"
+    >
+      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white dark:bg-zinc-900 rounded-[2.5rem] p-8 border border-black/5 dark:border-white/5 shadow-2xl relative space-y-6">
+        <button type="button" onClick={onClose} className="absolute top-6 right-6 p-2 bg-zinc-100 dark:bg-zinc-800 rounded-full text-zinc-400"><X size={20} /></button>
+        
+        <div className="text-center space-y-1 pt-2">
+          <p className="text-[10px] font-black text-rose-500 uppercase tracking-[0.2em]">{t.repay}</p>
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white italic">{loan.personName}</h2>
+          <p className="text-xs text-zinc-500 font-bold">{loan.description}</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.loan_amount}</label>
+            <div className="relative">
+              <input 
+                required
+                type={privacyMode ? "password" : "text"}
+                inputMode="decimal"
+                autoFocus
+                className="w-full p-5 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-2xl text-zinc-900 dark:text-white font-black outline-none text-center"
+                value={amount}
+                onChange={(e) => setAmount(convertArabicNumerals(e.target.value))}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1 text-center block">{t.loan_wallet}</label>
+            <div className="flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-2xl">
+              {(['bank', 'cash'] as const).map(w => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => setWallet(w)}
+                  className={`flex-1 py-3 text-[9px] font-black rounded-xl transition-all uppercase tracking-widest ${wallet === w ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+                >
+                  {t[WALLET_LABELS[w]]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button 
+          type="submit"
+          disabled={saving}
+          className="w-full py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl font-black uppercase tracking-widest shadow-xl disabled:opacity-50 hover:scale-[1.02] active:scale-95 transition-all"
+        >
+          {saving ? t.saving : t.confirm_transaction}
+        </button>
+      </form>
+    </motion.div>
+  );
+}
+
+function RecurringModal({ user, item, onClose, onRefresh, t, language, privacyMode }: { 
+  user: any, 
+  item?: any, 
+  onClose: () => void, 
+  onRefresh: () => void, 
+  t: any, 
+  language: 'ar' | 'en',
+  privacyMode: boolean
+}) {
+  const [description, setDescription] = useState(item?.description || '');
+  const [amount, setAmount] = useState(item?.amount?.toString() || '');
+  const [category, setCategory] = useState<TransactionCategory>(item?.category || 'other');
+  const [type, setType] = useState<'income' | 'expense'>(item?.type || 'expense');
+  const [wallet, setWallet] = useState<WalletType>(item?.wallet || 'bank');
+  const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly'>(item?.frequency || 'monthly');
+  const [autoProcess, setAutoProcess] = useState(item?.autoProcess === 1);
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!amount || !description) return;
+
+    setSaving(true);
+    try {
+      await api.saveRecurring({
+        id: item?.id || crypto.randomUUID(),
+        amount: parseFloat(amount),
+        description,
+        category,
+        type,
+        wallet,
+        frequency,
+        autoProcess,
+        userId: user.id
+      });
+      onRefresh();
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: '100%' }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: '100%' }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-zinc-100/90 dark:bg-zinc-950/90 backdrop-blur-xl"
+    >
+      <form onSubmit={handleSubmit} className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-[3rem] p-8 border border-black/5 dark:border-white/5 shadow-2xl relative space-y-6">
+        <button type="button" onClick={onClose} className="absolute top-6 right-6 p-2 bg-zinc-100 dark:bg-zinc-800 rounded-full text-zinc-400"><X size={20} /></button>
+        
+        <div className="space-y-1">
+          <h2 className="text-xl font-black text-zinc-900 dark:text-white italic tracking-tighter">{t.add_recurring}</h2>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-2xl">
+            {(['expense', 'income'] as const).map(lt => (
+              <button
+                key={lt}
+                type="button"
+                onClick={() => setType(lt)}
+                className={`flex-1 py-3 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${type === lt ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+              >
+                {t[lt]}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.description}</label>
+            <input 
+              required
+              className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.amount}</label>
+              <input 
+                required
+                type={privacyMode ? "password" : "text"}
+                inputMode="decimal"
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none"
+                value={amount}
+                onChange={(e) => setAmount(convertArabicNumerals(e.target.value))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.frequency}</label>
+              <select
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none text-[10px]"
+                value={frequency}
+                onChange={(e) => setFrequency(e.target.value as any)}
+              >
+                <option value="daily">{t.daily}</option>
+                <option value="weekly">{t.weekly}</option>
+                <option value="monthly">{t.monthly}</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.category}</label>
+              <select
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none text-[10px]"
+                value={category}
+                onChange={(e) => setCategory(e.target.value as TransactionCategory)}
+              >
+                {Object.entries(CATEGORIES).map(([id, cat]) => (
+                  <option key={id} value={id}>{t[cat.label]}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.wallet}</label>
+              <select
+                className="w-full p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-white/5 rounded-2xl text-zinc-900 dark:text-white font-bold outline-none text-[10px]"
+                value={wallet}
+                onChange={(e) => setWallet(e.target.value as WalletType)}
+              >
+                {(['bank', 'cash'] as const).map(w => (
+                  <option key={w} value={w}>{t[WALLET_LABELS[w]]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.confirmation_mode}</label>
+            <div className="flex p-1 bg-zinc-100 dark:bg-zinc-800 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setAutoProcess(true)}
+                className={`flex-1 py-3 text-[9px] font-black rounded-xl transition-all uppercase tracking-widest ${autoProcess ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+              >
+                {t.auto_confirm}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAutoProcess(false)}
+                className={`flex-1 py-3 text-[9px] font-black rounded-xl transition-all uppercase tracking-widest ${!autoProcess ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+              >
+                {t.manual_confirm}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button 
+          type="submit"
+          disabled={saving}
+          className="w-full py-5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 rounded-2xl font-black uppercase tracking-widest shadow-xl disabled:opacity-50"
+        >
+          {saving ? t.saving : t.save}
+        </button>
       </form>
     </motion.div>
   );

@@ -74,12 +74,83 @@ try {
   db.exec("ALTER TABLE users ADD COLUMN siriToken TEXT");
 } catch (e) {}
 
-// Bootstrap the user as admin (optional, now handled by script)
-/*
 try {
-  db.prepare("UPDATE users SET isAdmin = 1 WHERE email = ?").run('m.m.a.q.vip@gmail.com');
+  db.exec("ALTER TABLE users ADD COLUMN privacyMode INTEGER DEFAULT 0");
 } catch (e) {}
-*/
+
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recurring_transactions (
+      id TEXT PRIMARY KEY,
+      amount REAL,
+      description TEXT,
+      category TEXT,
+      type TEXT,
+      wallet TEXT,
+      frequency TEXT,
+      autoProcess INTEGER DEFAULT 0,
+      lastProcessed TEXT,
+      userId TEXT,
+      FOREIGN KEY(userId) REFERENCES users(id)
+    )
+  `);
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE recurring_transactions ADD COLUMN autoProcess INTEGER DEFAULT 0");
+} catch (e) {}
+
+// Background task for auto-processing recurring transactions
+function processRecurring() {
+  try {
+    const now = new Date();
+    const recurringItems = db.prepare("SELECT * FROM recurring_transactions WHERE autoProcess = 1").all();
+
+    for (const item of recurringItems as any[]) {
+      const lastProcessed = item.lastProcessed ? new Date(item.lastProcessed) : null;
+      let shouldProcess = false;
+
+      if (!lastProcessed) {
+        shouldProcess = true;
+      } else {
+        const diffDays = (now.getTime() - lastProcessed.getTime()) / (1000 * 60 * 60 * 24);
+        if (item.frequency === 'daily' && diffDays >= 1) shouldProcess = true;
+        if (item.frequency === 'weekly' && diffDays >= 7) shouldProcess = true;
+        if (item.frequency === 'monthly') {
+          // Check if it's the next month and same day (or last day of month if current day is > days in next month)
+          const nextProcessDate = new Date(lastProcessed);
+          nextProcessDate.setMonth(lastProcessed.getMonth() + 1);
+          if (now >= nextProcessDate) shouldProcess = true;
+        }
+      }
+
+      if (shouldProcess) {
+        const txId = nodeCrypto.randomUUID();
+        const dateStr = now.toISOString();
+
+        db.transaction(() => {
+          // Insert transaction
+          db.prepare(`
+            INSERT INTO transactions (id, amount, description, date, category, type, wallet, userId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(txId, item.amount, item.description, dateStr, item.category, item.type, item.wallet, item.userId);
+
+          // Update lastProcessed
+          db.prepare("UPDATE recurring_transactions SET lastProcessed = ? WHERE id = ?").run(dateStr, item.id);
+        })();
+        
+        console.log(`Auto-processed recurring transaction: ${item.description} for user ${item.userId}`);
+      }
+    }
+  } catch (err) {
+    console.error("Error processing recurring transactions:", err);
+  }
+}
+
+// Run every 10 minutes
+setInterval(processRecurring, 10 * 60 * 1000);
+// Also run on startup after a short delay
+setTimeout(processRecurring, 5000);
 
 try {
   db.exec("ALTER TABLE users ADD COLUMN password TEXT");
@@ -139,6 +210,21 @@ db.exec(`
     message TEXT,
     date TEXT,
     isRead INTEGER DEFAULT 0,
+    userId TEXT,
+    FOREIGN KEY(userId) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS loans (
+    id TEXT PRIMARY KEY,
+    amount REAL,
+    remainingAmount REAL,
+    personName TEXT,
+    description TEXT,
+    type TEXT,
+    status TEXT,
+    dueDate TEXT,
+    startDate TEXT,
+    wallet TEXT,
     userId TEXT,
     FOREIGN KEY(userId) REFERENCES users(id)
   );
@@ -425,7 +511,7 @@ async function startServer() {
   });
 
   app.post("/api/users", (req, res) => {
-    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, theme, language } = req.body;
+    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, theme, language, privacyMode } = req.body;
     db.prepare(`
         UPDATE users SET
           displayName = COALESCE(?, displayName),
@@ -438,9 +524,24 @@ async function startServer() {
           savingsFund = COALESCE(?, savingsFund),
           hasSeenTutorial = COALESCE(?, hasSeenTutorial),
           theme = COALESCE(?, theme),
-          language = COALESCE(?, language)
+          language = COALESCE(?, language),
+          privacyMode = COALESCE(?, privacyMode)
         WHERE id = ?
-    `).run(displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, theme, language, id);
+    `).run(
+      displayName, 
+      email, 
+      budgetThreshold, 
+      initialCash, 
+      initialBank, 
+      currency, 
+      emergencyFund, 
+      savingsFund, 
+      hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, 
+      theme, 
+      language, 
+      privacyMode !== undefined ? (privacyMode ? 1 : 0) : null,
+      id
+    );
     res.json({ status: "ok" });
   });
 
@@ -467,6 +568,46 @@ async function startServer() {
   app.delete("/api/transactions/user/:uid", (req, res) => {
     db.prepare("DELETE FROM transactions WHERE userId = ?").run(req.params.uid);
     res.json({ status: "ok" });
+  });
+
+  // Recurring Transactions Routes
+  app.get("/api/recurring/:userId", (req, res) => {
+    try {
+      const recurring = db.prepare("SELECT * FROM recurring_transactions WHERE userId = ?").all(req.params.userId);
+      res.json(recurring);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch recurring transactions" });
+    }
+  });
+
+  app.post("/api/recurring", (req, res) => {
+    const { id, amount, description, category, type, wallet, frequency, userId, autoProcess } = req.body;
+    try {
+      db.prepare(`
+        INSERT INTO recurring_transactions (id, amount, description, category, type, wallet, frequency, autoProcess, userId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          amount = excluded.amount,
+          description = excluded.description,
+          category = excluded.category,
+          type = excluded.type,
+          wallet = excluded.wallet,
+          frequency = excluded.frequency,
+          autoProcess = excluded.autoProcess
+      `).run(id, amount, description, category, type, wallet, frequency, autoProcess !== undefined ? (autoProcess ? 1 : 0) : 0, userId);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to save recurring transaction" });
+    }
+  });
+
+  app.delete("/api/recurring/:id", (req, res) => {
+    try {
+      db.prepare("DELETE FROM recurring_transactions WHERE id = ?").run(req.params.id);
+      res.json({ status: "ok" });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete recurring transaction" });
+    }
   });
 
   // Subscription Routes
@@ -531,6 +672,50 @@ async function startServer() {
 
   app.delete("/api/notifications/:id", (req, res) => {
     db.prepare("DELETE FROM notifications WHERE id = ?").run(req.params.id);
+    res.json({ status: "ok" });
+  });
+
+  // Loan Routes
+  app.get("/api/loans/:uid", (req, res) => {
+    const rows = db.prepare("SELECT * FROM loans WHERE userId = ? ORDER BY startDate DESC").all(req.params.uid);
+    res.json(rows);
+  });
+
+  app.post("/api/loans", (req, res) => {
+    const { id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId } = req.body;
+    db.prepare(`
+      INSERT INTO loans (id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        amount = excluded.amount,
+        remainingAmount = excluded.remainingAmount,
+        personName = excluded.personName,
+        description = excluded.description,
+        type = excluded.type,
+        status = excluded.status,
+        dueDate = excluded.dueDate,
+        wallet = excluded.wallet
+    `).run(id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId);
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/loans/:id/repay", (req, res) => {
+    const { amount } = req.body;
+    const loan: any = db.prepare("SELECT * FROM loans WHERE id = ?").get(req.params.id);
+    
+    if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+    const newRemaining = Math.max(0, loan.remainingAmount - amount);
+    const newStatus = newRemaining === 0 ? "paid" : loan.status;
+
+    db.prepare("UPDATE loans SET remainingAmount = ?, status = ? WHERE id = ?")
+      .run(newRemaining, newStatus, req.params.id);
+    
+    res.json({ status: "ok", remainingAmount: newRemaining, loanStatus: newStatus });
+  });
+
+  app.delete("/api/loans/:id", (req, res) => {
+    db.prepare("DELETE FROM loans WHERE id = ?").run(req.params.id);
     res.json({ status: "ok" });
   });
 
