@@ -72,6 +72,7 @@ const formatAmount = (amount: number, isPrivacyMode: boolean) => {
 
 import { 
   CATEGORIES, 
+  getCategory,
   NECESSITY_LABELS,
   WALLET_LABELS
 } from './constants';
@@ -771,7 +772,7 @@ export default function App() {
               onClick={() => setShowSubscriptionModal({ show: true, sub: s })}
               className="min-w-[160px] snap-center glass p-5 rounded-[2rem] space-y-4 cursor-pointer hover:border-black/10 dark:hover:border-white/20 transition-all"
             >
-              <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-900 dark:text-zinc-100 font-bold text-lg shadow-inner">{s.name[0]}</div>
+              <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-900 dark:text-zinc-100 font-bold text-lg shadow-inner">{(s.name && s.name[0]) || '★'}</div>
               <div>
                 <p className="text-sm font-black text-zinc-900 dark:text-white">{s.name}</p>
                 <p className="text-[10px] text-zinc-500 font-bold">{t.every_month}</p>
@@ -808,7 +809,7 @@ export default function App() {
         </div>
         <div className="space-y-4">
         {transactions.length > 0 ? transactions.slice(0, 5).map((tx, i) => {
-            const category = CATEGORIES[tx.category];
+            const category = getCategory(tx.category);
             const isExpense = tx.type === 'expense';
             return (
               <motion.div 
@@ -826,7 +827,7 @@ export default function App() {
                 <div className={`flex-1 min-w-0 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                   <p className="font-black text-sm text-zinc-900 dark:text-white truncate mb-0.5 tracking-tight">{tx.description}</p>
                   <div className="flex items-center justify-end gap-2 text-zinc-400 dark:text-zinc-500">
-                    <span className="text-[9px] font-bold uppercase tracking-wider">{t[WALLET_LABELS[tx.wallet]]}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-wider">{WALLET_LABELS[tx.wallet] ? t[WALLET_LABELS[tx.wallet]] : ''}</span>
                     <div className="w-1 h-1 rounded-full bg-zinc-200 dark:bg-zinc-800"></div>
                     <span className="text-[9px] font-bold uppercase tracking-wider">{new Date(tx.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { month: 'short', day: 'numeric' })}</span>
                   </div>
@@ -968,7 +969,8 @@ export default function App() {
                  <RechartsPieChart>
                    <Pie
                     data={transactions.filter(tx => tx.type === 'expense').reduce((acc, curr) => {
-                      const translatedName = t[CATEGORIES[curr.category].label] || curr.category;
+                      const catObj = getCategory(curr.category);
+                      const translatedName = (catObj && t[catObj.label]) || curr.category;
                       const idx = acc.findIndex(i => i.name === translatedName);
                       if (idx > -1) acc[idx].value += curr.amount;
                       else acc.push({ name: translatedName, value: curr.amount });
@@ -983,7 +985,7 @@ export default function App() {
                     stroke="none"
                   >
                     {transactions.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 7]} cornerRadius={12} />
+                      <Cell key={`cell-${index}`} fill={['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 7]} />
                     ))}
                   </Pie>
                   <Tooltip 
@@ -2307,7 +2309,7 @@ function AllTransactionsModal({ transactions, onClose, appCurrency, language, t,
 
       <div className="space-y-4 max-w-md mx-auto w-full pb-10">
         {transactions.map((tx) => {
-          const category = CATEGORIES[tx.category];
+          const category = getCategory(tx.category);
           const isExpense = tx.type === 'expense';
           const isTransfer = tx.type === 'transfer';
           return (
@@ -2319,13 +2321,13 @@ function AllTransactionsModal({ transactions, onClose, appCurrency, language, t,
                 <p className="font-black text-zinc-900 dark:text-zinc-100 truncate text-sm italic">{tx.description}</p>
                 <div className="flex items-center gap-2 mt-1 justify-end">
                   <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
-                    {isTransfer ? t.transfer : t[category.label]}
+                    {isTransfer ? t.transfer : (t[category.label] || category.label)}
                   </span>
                   <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
                   <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">{new Date(tx.date).toLocaleDateString(language === 'ar' ? 'ar' : 'en-US', { day: 'numeric', month: 'short' })}</span>
                   <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
                   <span className="text-[9px] font-black text-zinc-500 dark:text-zinc-600 uppercase tracking-tighter italic">
-                    {t[WALLET_LABELS[tx.wallet]]} {isTransfer && ` → ${t[WALLET_LABELS[(tx as any).toWallet!]]}`}
+                    {WALLET_LABELS[tx.wallet] ? t[WALLET_LABELS[tx.wallet]] : ''} {isTransfer && (tx as any).toWallet && ` → ${WALLET_LABELS[(tx as any).toWallet] ? t[WALLET_LABELS[(tx as any).toWallet]] : ''}`}
                   </span>
                 </div>
               </div>
@@ -2374,7 +2376,7 @@ function SnapshotDetailModal({ snapshot, onClose, appCurrency, language, t, priv
         <div className="space-y-4 pb-10">
           <h3 className="font-black text-zinc-400 dark:text-zinc-600 px-1 uppercase text-[10px] tracking-widest">{t.archived_transactions}</h3>
           {(snapshot.transactions || []).map((tx) => {
-            const category = CATEGORIES[tx.category];
+            const category = getCategory(tx.category);
             const isExpense = tx.type === 'expense';
             const isTransfer = tx.type === 'transfer';
             return (
@@ -2386,11 +2388,11 @@ function SnapshotDetailModal({ snapshot, onClose, appCurrency, language, t, priv
                   <p className="font-bold text-zinc-900 dark:text-zinc-100 truncate italic">{tx.description}</p>
                   <div className="flex items-center gap-2 mt-0.5 justify-end">
                     <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">
-                      {isTransfer ? t.transfer : t[category.label]}
+                      {isTransfer ? t.transfer : (t[category.label] || category.label)}
                     </span>
                     <span className="w-1 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full"></span>
                     <span className="text-[9px] font-black text-zinc-400 dark:text-zinc-600">
-                      {t[WALLET_LABELS[(tx as any).wallet]]} {isTransfer && (tx as any).toWallet && ` ← ${t[WALLET_LABELS[(tx as any).toWallet]]}`}
+                      {WALLET_LABELS[(tx as any).wallet] ? t[WALLET_LABELS[(tx as any).wallet]] : ''} {isTransfer && (tx as any).toWallet && ` ← ${WALLET_LABELS[(tx as any).toWallet] ? t[WALLET_LABELS[(tx as any).toWallet]] : ''}`}
                     </span>
                   </div>
                 </div>
@@ -3070,9 +3072,10 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
     if (!amount || !user) return;
     
     // Auto-description for transfers
+    const cat = getCategory(category);
     const finalDescription = type === 'transfer' 
-      ? `${t.transfer_from} ${t[WALLET_LABELS[wallet]]} ${t.to_label} ${t[WALLET_LABELS[toWallet]]}`
-      : description || t[CATEGORIES[category].label];
+      ? `${t.transfer_from} ${WALLET_LABELS[wallet] ? t[WALLET_LABELS[wallet]] : ''} ${t.to_label} ${WALLET_LABELS[toWallet] ? t[WALLET_LABELS[toWallet]] : ''}`
+      : description || (cat && t[cat.label]) || t.cat_other;
 
     if (isSubscription) {
       try {

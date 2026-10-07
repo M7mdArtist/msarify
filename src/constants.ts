@@ -37,6 +37,37 @@ export const CATEGORIES: Record<TransactionCategory, { label: string; icon: any;
   transfer: { label: 'cat_transfer', icon: ArrowRightLeft, color: 'bg-amber-100 text-amber-600' },
 };
 
+export const getCategory = (catKey?: string): { label: string; icon: any; color: string } => {
+  if (!catKey) return CATEGORIES.other;
+  const key = String(catKey).toLowerCase().trim();
+  if (key in CATEGORIES) {
+    return CATEGORIES[key as TransactionCategory];
+  }
+  const aliases: Record<string, TransactionCategory> = {
+    rent: 'living',
+    housing: 'living',
+    utilities: 'bills',
+    utility: 'bills',
+    bill: 'bills',
+    transportation: 'transport',
+    transit: 'transport',
+    gas: 'transport',
+    fuel: 'transport',
+    car: 'transport',
+    groceries: 'food',
+    grocery: 'food',
+    medical: 'health',
+    pharmacy: 'health',
+    fun: 'entertainment',
+    invest: 'investment',
+    present: 'gift',
+  };
+  if (aliases[key] && CATEGORIES[aliases[key]]) {
+    return CATEGORIES[aliases[key]];
+  }
+  return CATEGORIES.other;
+};
+
 export const NECESSITY_LABELS: Record<NecessityType, string> = {
   necessity: 'necessity',
   luxury: 'luxury',

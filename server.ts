@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import cors from "cors";
 import morgan from "morgan";
 import Database from "better-sqlite3";
@@ -17,8 +18,27 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const DB_PATH = process.env.DB_PATH || "data.db";
-const db = new Database(DB_PATH);
+
+let dbPath = process.env.DB_PATH || "data.db";
+try {
+  const dir = path.dirname(path.resolve(dbPath));
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+} catch (e) {
+  console.warn("Could not create directory for DB_PATH, using local fallback:", e);
+  dbPath = path.resolve(__dirname, "data.db");
+}
+
+let db: any;
+try {
+  db = new Database(dbPath);
+} catch (e) {
+  console.warn("Failed to open DB at", dbPath, "falling back to local data.db:", e);
+  dbPath = path.resolve(__dirname, "data.db");
+  db = new Database(dbPath);
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-123";
 
 // Initialize Database Schema
@@ -100,6 +120,39 @@ try {
   db.exec("ALTER TABLE recurring_transactions ADD COLUMN autoProcess INTEGER DEFAULT 0");
 } catch (e) {}
 
+const VALID_CATEGORIES = new Set([
+  'salary', 'living', 'bills', 'food', 'transport', 'health', 
+  'shopping', 'entertainment', 'investment', 'gift', 'other', 'transfer'
+]);
+
+const CATEGORY_MAP: Record<string, string> = {
+  rent: 'living',
+  housing: 'living',
+  utilities: 'bills',
+  utility: 'bills',
+  bill: 'bills',
+  transportation: 'transport',
+  transit: 'transport',
+  gas: 'transport',
+  fuel: 'transport',
+  car: 'transport',
+  groceries: 'food',
+  dining: 'food',
+  medical: 'health',
+  pharmacy: 'health',
+  fun: 'entertainment',
+  invest: 'investment',
+  present: 'gift',
+};
+
+function sanitizeCategory(cat?: string): string {
+  if (!cat) return 'other';
+  const lower = String(cat).toLowerCase().trim();
+  if (VALID_CATEGORIES.has(lower)) return lower;
+  if (CATEGORY_MAP[lower]) return CATEGORY_MAP[lower];
+  return 'other';
+}
+
 // Background task for auto-processing recurring transactions
 function processRecurring() {
   try {
@@ -127,13 +180,14 @@ function processRecurring() {
       if (shouldProcess) {
         const txId = nodeCrypto.randomUUID();
         const dateStr = now.toISOString();
+        const safeCat = sanitizeCategory(item.category);
 
         db.transaction(() => {
           // Insert transaction
           db.prepare(`
             INSERT INTO transactions (id, amount, description, date, category, type, wallet, userId)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(txId, item.amount, item.description, dateStr, item.category, item.type, item.wallet, item.userId);
+          `).run(txId, item.amount, item.description, dateStr, safeCat, item.type, item.wallet, item.userId);
 
           // Update lastProcessed
           db.prepare("UPDATE recurring_transactions SET lastProcessed = ? WHERE id = ?").run(dateStr, item.id);
@@ -230,6 +284,22 @@ db.exec(`
   );
 `);
 
+// Migration to normalize categories and prevent undefined category crash
+try {
+  db.exec(`
+    UPDATE transactions SET category = 'living' WHERE category = 'rent' OR category = 'housing';
+    UPDATE transactions SET category = 'bills' WHERE category = 'utilities' OR category = 'utility';
+    UPDATE transactions SET category = 'transport' WHERE category = 'transportation' OR category = 'transit';
+    UPDATE transactions SET category = 'food' WHERE category = 'groceries';
+    UPDATE transactions SET category = 'other' WHERE category IS NULL OR category = '';
+    UPDATE recurring_transactions SET category = 'living' WHERE category = 'rent' OR category = 'housing';
+    UPDATE recurring_transactions SET category = 'bills' WHERE category = 'utilities' OR category = 'utility';
+    UPDATE recurring_transactions SET category = 'transport' WHERE category = 'transportation' OR category = 'transit';
+    UPDATE recurring_transactions SET category = 'food' WHERE category = 'groceries';
+    UPDATE recurring_transactions SET category = 'other' WHERE category IS NULL OR category = '';
+  `);
+} catch (e) {}
+
 async function startServer() {
   const app = express();
 
@@ -287,7 +357,7 @@ async function startServer() {
         - Extract description as a clear string.
         - Determine type: 'expense' (spent money) or 'income' (received money).
         - Determine wallet: 'cash' or 'bank' ( صرافة/بنك/بطاقة -> bank, كاش/نقدي -> cash). Default to bank if unclear.
-        - Determine category from this list: food, rent, utilities, transportation, health, entertainment, investment, gift, other.
+        - Determine category from this exact list: salary, living, bills, food, transport, health, shopping, entertainment, investment, gift, other.
         - Determine necessity: 'necessity' (mandatory) or 'luxury' (optional/fun).
         
         Text to parse: "${text}"
@@ -309,7 +379,7 @@ async function startServer() {
                   description: { type: Type.STRING },
                   type: { type: Type.STRING, enum: ["expense", "income"] },
                   wallet: { type: Type.STRING, enum: ["cash", "bank"] },
-                  category: { type: Type.STRING, enum: ["food", "rent", "utilities", "transportation", "health", "entertainment", "investment", "gift", "other"] },
+                  category: { type: Type.STRING, enum: ["salary", "living", "bills", "food", "transport", "health", "shopping", "entertainment", "investment", "gift", "other"] },
                   necessity: { type: Type.STRING, enum: ["necessity", "luxury"] }
                 },
                 required: ["amount", "description", "type", "wallet", "category", "necessity"]
@@ -333,11 +403,12 @@ async function startServer() {
       const result = JSON.parse(aiResponse.text);
       const id = nodeCrypto.randomUUID();
       const date = new Date().toISOString();
+      const safeCat = sanitizeCategory(result.category);
 
       db.prepare(`
         INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, userId)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, result.amount, result.description, date, result.category, result.type, result.necessity, result.wallet, user.id);
+      `).run(id, result.amount, result.description, date, safeCat, result.type, result.necessity, result.wallet, user.id);
 
       const walletLabel = result.wallet === 'cash' ? 'كاش' : 'الصرافة';
       const currency = user.currency || 'ر.س';
@@ -553,10 +624,11 @@ async function startServer() {
 
   app.post("/api/transactions", (req, res) => {
     const { id, amount, description, date, category, type, necessity, wallet, toWallet, userId } = req.body;
+    const safeCat = sanitizeCategory(category);
     db.prepare(`
       INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, toWallet, userId)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, amount, description, date, category, type, necessity, wallet, toWallet, userId);
+    `).run(id, amount, description, date, safeCat, type, necessity, wallet, toWallet, userId);
     res.json({ status: "ok" });
   });
 
@@ -582,6 +654,7 @@ async function startServer() {
 
   app.post("/api/recurring", (req, res) => {
     const { id, amount, description, category, type, wallet, frequency, userId, autoProcess } = req.body;
+    const safeCat = sanitizeCategory(category);
     try {
       db.prepare(`
         INSERT INTO recurring_transactions (id, amount, description, category, type, wallet, frequency, autoProcess, userId)
@@ -594,7 +667,7 @@ async function startServer() {
           wallet = excluded.wallet,
           frequency = excluded.frequency,
           autoProcess = excluded.autoProcess
-      `).run(id, amount, description, category, type, wallet, frequency, autoProcess !== undefined ? (autoProcess ? 1 : 0) : 0, userId);
+      `).run(id, amount, description, safeCat, type, wallet, frequency, autoProcess !== undefined ? (autoProcess ? 1 : 0) : 0, userId);
       res.json({ status: "ok" });
     } catch (err) {
       res.status(500).json({ error: "Failed to save recurring transaction" });
