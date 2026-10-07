@@ -42,6 +42,8 @@ export interface Subscription {
   amount: number;
   nextBillingDate: string;
   category: TransactionCategory;
+  wallet?: WalletType;
+  autoDeduct?: number | boolean;
   userId: string;
 }
 

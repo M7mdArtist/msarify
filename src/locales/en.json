@@ -97,6 +97,9 @@
   "subscription_name": "Subscription Name",
   "monthly_amount": "Monthly Amount",
   "next_billing_date": "Next Billing Date",
+  "auto_deduct_subscription": "Auto-deduct on billing date",
+  "auto_deduct_subscription_desc": "Automatically deduct amount, add transaction, and send notification",
+  "subscription_wallet": "Deduction Wallet",
   "update_data": "Update Data",
   "confirm_delete_subscription": "Confirm Delete Subscription?",
   "tutorial_welcome_title": "Welcome to Msarify! 🚀",
@@ -265,5 +268,12 @@
   "no_recurring": "No recurring transactions registered",
   "confirmation_mode": "Confirmation Mode",
   "auto_confirm": "Automatic",
-  "manual_confirm": "Manual"
+  "manual_confirm": "Manual",
+  "export_data": "Data Export",
+  "export_csv": "Export Transactions (CSV)",
+  "export_csv_desc": "Export complete transaction history to a CSV file to analyze in Excel, Google Sheets, or accounting software.",
+  "export_csv_btn": "Export to CSV",
+  "export_success": "CSV file downloaded successfully!",
+  "export_empty": "No transactions available to export",
+  "total_transactions_to_export": "Transactions available to export"
 }

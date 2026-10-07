@@ -97,6 +97,9 @@
   "subscription_name": "اسم الاشتراك",
   "monthly_amount": "المبلغ الشهري",
   "next_billing_date": "تاريخ التجديد القادم",
+  "auto_deduct_subscription": "خصم تلقائي عند حلول الموعد",
+  "auto_deduct_subscription_desc": "خصم المبلغ تلقائياً وتسجيل عملية وتنبيهك بإشعار",
+  "subscription_wallet": "محفظة الخصم",
   "update_data": "تحديث البيانات",
   "confirm_delete_subscription": "تأكيد حذف الاشتراك؟",
   "tutorial_welcome_title": "أهلاً بك في مصاريفي! 🚀",
@@ -265,5 +268,12 @@
   "no_recurring": "لا توجد عمليات ثابتة مسجلة",
   "confirmation_mode": "طريقة التأكيد",
   "auto_confirm": "تلقائي",
-  "manual_confirm": "يدوي"
+  "manual_confirm": "يدوي",
+  "export_data": "تصدير البيانات",
+  "export_csv": "تصدير المعاملات (CSV)",
+  "export_csv_desc": "تصدير سجل المعاملات بالكامل إلى ملف CSV لتحليله في Excel أو جداول Google أو التطبيقات المحاسبية.",
+  "export_csv_btn": "تصدير إلى CSV",
+  "export_success": "تم تحميل ملف CSV بنجاح!",
+  "export_empty": "لا توجد أي معاملات مسجلة للتصدير حالياً",
+  "total_transactions_to_export": "المعاملات المتاحة للتصدير"
 }

@@ -120,6 +120,10 @@ export const api = {
     await fetch(`${API_BASE}/notifications/read-all/${uid}`, { method: "POST" });
   },
 
+  async markNotificationRead(id: string): Promise<void> {
+    await fetch(`${API_BASE}/notifications/read/${id}`, { method: "POST" });
+  },
+
   async deleteNotification(id: string): Promise<void> {
     await fetch(`${API_BASE}/notifications/${id}`, { method: "DELETE" });
   },

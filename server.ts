@@ -201,10 +201,101 @@ function processRecurring() {
   }
 }
 
+// Background and on-demand task for auto-deducting due subscriptions
+function processSubscriptions(targetUserId?: string) {
+  try {
+    const now = new Date();
+    let query = `
+      SELECT s.*, u.currency, u.language, u.displayName
+      FROM subscriptions s
+      LEFT JOIN users u ON s.userId = u.id
+      WHERE (s.autoDeduct IS NULL OR s.autoDeduct = 1)
+    `;
+    const params: any[] = [];
+    if (targetUserId) {
+      query += " AND s.userId = ?";
+      params.push(targetUserId);
+    }
+
+    const subscriptions = db.prepare(query).all(...params);
+
+    for (const sub of subscriptions as any[]) {
+      if (!sub.nextBillingDate) continue;
+      const billingDate = new Date(sub.nextBillingDate);
+      if (isNaN(billingDate.getTime())) continue;
+
+      if (billingDate <= now) {
+        const txId = nodeCrypto.randomUUID();
+        const notifId = nodeCrypto.randomUUID();
+        const dateStr = now.toISOString();
+        const safeCat = sanitizeCategory(sub.category || 'bills');
+        const wallet = sub.wallet || 'bank';
+        const currency = sub.currency || 'ر.س';
+        const isAr = sub.language !== 'en';
+
+        // Calculate next billing date: advance by month until strictly in the future
+        const nextDate = new Date(billingDate);
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        while (nextDate <= now) {
+          nextDate.setMonth(nextDate.getMonth() + 1);
+        }
+        const nextBillingDateStr = nextDate.toISOString();
+
+        const notifTitle = isAr ? 'تجديد اشتراك تلقائي' : 'Subscription Auto-Renewed';
+        const notifMsg = isAr 
+          ? `تم خصم ${sub.amount} ${currency} لاشتراك "${sub.name}" بنجاح.`
+          : `Successfully deducted ${sub.amount} ${currency} for subscription "${sub.name}".`;
+
+        db.transaction(() => {
+          // 1. Add expense transaction
+          db.prepare(`
+            INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, userId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            txId, 
+            sub.amount, 
+            sub.name, 
+            dateStr, 
+            safeCat, 
+            'expense', 
+            'necessity', 
+            wallet, 
+            sub.userId
+          );
+
+          // 2. Advance nextBillingDate on subscription
+          db.prepare(`
+            UPDATE subscriptions 
+            SET nextBillingDate = ? 
+            WHERE id = ?
+          `).run(nextBillingDateStr, sub.id);
+
+          // 3. Create in-app notification
+          db.prepare(`
+            INSERT INTO notifications (id, title, message, date, isRead, userId)
+            VALUES (?, ?, ?, ?, 0, ?)
+          `).run(notifId, notifTitle, notifMsg, dateStr, sub.userId);
+        })();
+
+        console.log(`Auto-deducted subscription "${sub.name}" (${sub.amount}) for user ${sub.userId}`);
+      }
+    }
+  } catch (err) {
+    console.error("Error processing subscriptions:", err);
+  }
+}
+
 // Run every 10 minutes
-setInterval(processRecurring, 10 * 60 * 1000);
+setInterval(() => {
+  processRecurring();
+  processSubscriptions();
+}, 10 * 60 * 1000);
+
 // Also run on startup after a short delay
-setTimeout(processRecurring, 5000);
+setTimeout(() => {
+  processRecurring();
+  processSubscriptions();
+}, 5000);
 
 try {
   db.exec("ALTER TABLE users ADD COLUMN password TEXT");
@@ -219,6 +310,14 @@ try {
 
 try {
   db.exec("ALTER TABLE transactions ADD COLUMN necessity TEXT DEFAULT 'necessity'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE subscriptions ADD COLUMN wallet TEXT DEFAULT 'bank'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE subscriptions ADD COLUMN autoDeduct INTEGER DEFAULT 1");
 } catch (e) {}
 
 db.exec(`
@@ -618,6 +717,9 @@ async function startServer() {
 
   // Transaction Routes
   app.get("/api/transactions/:uid", (req, res) => {
+    try {
+      processSubscriptions(req.params.uid);
+    } catch (e) {}
     const rows = db.prepare("SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC").all(req.params.uid);
     res.json(rows);
   });
@@ -685,21 +787,29 @@ async function startServer() {
 
   // Subscription Routes
   app.get("/api/subscriptions/:uid", (req, res) => {
+    try {
+      processSubscriptions(req.params.uid);
+    } catch (e) {}
     const rows = db.prepare("SELECT * FROM subscriptions WHERE userId = ?").all(req.params.uid);
     res.json(rows);
   });
 
   app.post("/api/subscriptions", (req, res) => {
-    const { id, name, amount, nextBillingDate, category, userId } = req.body;
+    const { id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId } = req.body;
+    const safeCat = sanitizeCategory(category);
+    const safeWallet = wallet === 'cash' ? 'cash' : 'bank';
+    const safeAutoDeduct = autoDeduct !== undefined ? (autoDeduct ? 1 : 0) : 1;
     db.prepare(`
-      INSERT INTO subscriptions (id, name, amount, nextBillingDate, category, userId)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO subscriptions (id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         amount = excluded.amount,
         nextBillingDate = excluded.nextBillingDate,
-        category = excluded.category
-    `).run(id, name, amount, nextBillingDate, category, userId);
+        category = excluded.category,
+        wallet = excluded.wallet,
+        autoDeduct = excluded.autoDeduct
+    `).run(id, name, amount, nextBillingDate, safeCat, safeWallet, safeAutoDeduct, userId);
     res.json({ status: "ok" });
   });
 
@@ -740,6 +850,11 @@ async function startServer() {
 
   app.post("/api/notifications/read-all/:uid", (req, res) => {
     db.prepare("UPDATE notifications SET isRead = 1 WHERE userId = ?").run(req.params.uid);
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/notifications/read/:id", (req, res) => {
+    db.prepare("UPDATE notifications SET isRead = 1 WHERE id = ?").run(req.params.id);
     res.json({ status: "ok" });
   });
 

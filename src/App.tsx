@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -38,7 +38,10 @@ import {
   Sun,
   Languages,
   Globe,
-  Palette
+  Palette,
+  Download,
+  FileSpreadsheet,
+  Check
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
@@ -196,6 +199,18 @@ export default function App() {
   const [showLoanModal, setShowLoanModal] = useState<{ show: boolean, loan?: any }>({ show: false });
   const [showRepayModal, setShowRepayModal] = useState<{ show: boolean, loan?: any }>({ show: false });
   const [showRecurringModal, setShowRecurringModal] = useState<{ show: boolean, item?: any }>({ show: false });
+  const [activeSubscriptionToast, setActiveSubscriptionToast] = useState<{ id: string; title: string; message: string } | null>(null);
+  const [isExportSuccess, setIsExportSuccess] = useState(false);
+  const shownNotificationIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (activeSubscriptionToast) {
+      const timer = setTimeout(() => {
+        setActiveSubscriptionToast(null);
+      }, 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeSubscriptionToast]);
   const [privacyMode, setPrivacyMode] = useState(() => {
     const stored = localStorage.getItem('user');
     if (stored) {
@@ -305,7 +320,22 @@ export default function App() {
       if (txsRes.status === 'fulfilled') setTransactions(txsRes.value || []);
       if (subsRes.status === 'fulfilled') setSubscriptions(subsRes.value || []);
       if (snapsRes.status === 'fulfilled') setSnapshots(snapsRes.value || []);
-      if (noticesRes.status === 'fulfilled') setNotifications(noticesRes.value || []);
+      if (noticesRes.status === 'fulfilled') {
+        const fetchedNotices = noticesRes.value || [];
+        setNotifications(fetchedNotices);
+
+        // Check for subscription auto-deductions to show banner when entering
+        const unreadSubNotice = fetchedNotices.find((n: AppNotification) =>
+          !n.isRead &&
+          (n.title.includes('اشتراك') || n.title.includes('Subscription') || n.message.includes('اشتراك') || n.message.includes('subscription')) &&
+          !shownNotificationIds.current.has(n.id)
+        );
+
+        if (unreadSubNotice) {
+          shownNotificationIds.current.add(unreadSubNotice.id);
+          setActiveSubscriptionToast(unreadSubNotice);
+        }
+      }
       if (loanListRes.status === 'fulfilled') setLoans(loanListRes.value || []);
       if (recurringListRes.status === 'fulfilled') setRecurring(recurringListRes.value || []);
     } catch (err) {
@@ -494,6 +524,90 @@ export default function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const exportTransactionsToCSV = () => {
+    if (!transactions || transactions.length === 0) {
+      alert(t.export_empty || (language === 'ar' ? 'لا توجد معاملات مسجلة للتصدير حالياً' : 'No transactions recorded to export'));
+      return;
+    }
+
+    const isArabic = language === 'ar';
+    const headers = isArabic
+      ? ['المعرف', 'التاريخ', 'الوقت', 'الوصف', 'النوع', 'المبلغ', 'العملة', 'التصنيف', 'المحفظة', 'محفظة التحويل', 'تصنيف الإنفاق']
+      : ['ID', 'Date', 'Time', 'Description', 'Type', 'Amount', 'Currency', 'Category', 'Wallet', 'To Wallet', 'Necessity'];
+
+    const typeLabels: Record<string, string> = isArabic ? {
+      expense: 'مصروف',
+      income: 'دخل',
+      transfer: 'تحويل'
+    } : {
+      expense: 'Expense',
+      income: 'Income',
+      transfer: 'Transfer'
+    };
+
+    const walletLabelsMap: Record<string, string> = {
+      cash: isArabic ? 'كاش' : 'Cash',
+      bank: isArabic ? 'حساب بنكي' : 'Bank',
+      emergency: isArabic ? 'صندوق الطوارئ' : 'Emergency Fund',
+      savings: isArabic ? 'صندوق الادخار' : 'Savings Fund'
+    };
+
+    const necessityLabelsMap: Record<string, string> = {
+      necessity: isArabic ? 'ضروريات' : 'Necessities',
+      luxury: isArabic ? 'كماليات' : 'Luxuries'
+    };
+
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = transactions.map(tx => {
+      const d = new Date(tx.date);
+      const dateFormatted = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : tx.date;
+      const timeFormatted = !isNaN(d.getTime()) ? d.toLocaleTimeString(isArabic ? 'ar-SA' : 'en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+      const cat = getCategory(tx.category);
+      const catName = t[cat.label] || cat.label || tx.category || '';
+      const typeLabel = typeLabels[tx.type] || tx.type;
+      const walletLabel = walletLabelsMap[tx.wallet] || (WALLET_LABELS[tx.wallet] ? (t[WALLET_LABELS[tx.wallet]] || tx.wallet) : tx.wallet);
+      const toWalletLabel = tx.toWallet ? (walletLabelsMap[tx.toWallet] || (WALLET_LABELS[tx.toWallet] ? (t[WALLET_LABELS[tx.toWallet]] || tx.toWallet) : tx.toWallet)) : '';
+      const necessityLabel = tx.necessity ? (necessityLabelsMap[tx.necessity] || (NECESSITY_LABELS[tx.necessity] ? (t[NECESSITY_LABELS[tx.necessity]] || tx.necessity) : tx.necessity)) : '';
+
+      return [
+        escapeCSV(tx.id),
+        escapeCSV(dateFormatted),
+        escapeCSV(timeFormatted),
+        escapeCSV(tx.description),
+        escapeCSV(typeLabel),
+        escapeCSV(tx.amount),
+        escapeCSV(getDisplayCurrency(appCurrency, language)),
+        escapeCSV(catName),
+        escapeCSV(walletLabel),
+        escapeCSV(toWalletLabel),
+        escapeCSV(necessityLabel)
+      ].join(',');
+    });
+
+    // UTF-8 BOM (\uFEFF) ensures Excel and Google Sheets render Arabic characters without garbling
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const nowStr = new Date().toISOString().split('T')[0];
+    link.setAttribute('href', url);
+    link.setAttribute('download', isArabic ? `سجل_المعاملات_${nowStr}.csv` : `transactions_${nowStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setIsExportSuccess(true);
+    setTimeout(() => setIsExportSuccess(false), 4000);
   };
 
   const handleAddTransaction = async (t: Omit<Transaction, 'id'>) => {
@@ -911,6 +1025,42 @@ export default function App() {
             language={language}
             t={t}
           />
+        )}
+        {activeSubscriptionToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -60, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -60, scale: 0.95 }}
+            className="fixed top-5 left-1/2 -translate-x-1/2 z-[250] w-[92%] max-w-md bg-white/95 dark:bg-zinc-900/95 border border-emerald-500/30 rounded-3xl p-4 shadow-2xl backdrop-blur-2xl flex items-center gap-3 cursor-pointer"
+            onClick={async () => {
+              setShowNotificationsModal(true);
+              try {
+                await api.markNotificationRead(activeSubscriptionToast.id);
+              } catch (e) {}
+              setActiveSubscriptionToast(null);
+              refreshData();
+            }}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0 shadow-inner">
+              <CreditCard size={22} />
+            </div>
+            <div className={`flex-1 min-w-0 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500">{activeSubscriptionToast.title}</span>
+              </div>
+              <p className="text-xs font-bold text-zinc-900 dark:text-white truncate mt-0.5">{activeSubscriptionToast.message}</p>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveSubscriptionToast(null);
+              }}
+              className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white rounded-xl transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1512,6 +1662,61 @@ export default function App() {
                 className="w-full py-5 bg-white text-indigo-600 font-black rounded-[2rem] shadow-2xl relative z-10 transition-all text-sm italic tracking-tight"
               >
                 {user?.siriToken ? t.renew_key : t.generate_key}
+              </motion.button>
+            </section>
+
+            {/* Data Export Section */}
+            <section className="bg-zinc-100 dark:bg-white/[0.02] backdrop-blur-3xl rounded-[3rem] border border-zinc-200 dark:border-white/5 p-8 space-y-6 relative overflow-hidden group shadow-sm">
+              <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-[70px] -translate-y-12 translate-x-12 pointer-events-none"></div>
+              
+              <div className="flex items-center gap-4 relative z-10">
+                <div className="w-14 h-14 bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-inner">
+                  <FileSpreadsheet size={26} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-black text-zinc-900 dark:text-white text-lg tracking-tight italic">{t.export_csv}</h4>
+                    <span className="text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                      CSV
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold leading-relaxed mt-1">
+                    {t.export_csv_desc}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-white/70 dark:bg-zinc-950/60 rounded-2xl border border-zinc-200/80 dark:border-white/5 flex items-center justify-between text-xs font-bold text-zinc-600 dark:text-zinc-400 relative z-10">
+                <span>{t.total_transactions_to_export}:</span>
+                <span className="font-black text-zinc-900 dark:text-white tabular-nums px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-black/5 dark:border-white/5">
+                  {transactions.length} {language === 'ar' ? 'عملية' : 'tx'}
+                </span>
+              </div>
+
+              <motion.button 
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={exportTransactionsToCSV}
+                disabled={transactions.length === 0}
+                className={`w-full py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest relative z-10 transition-all flex items-center justify-center gap-3 shadow-xl ${
+                  isExportSuccess 
+                    ? 'bg-emerald-500 text-white shadow-emerald-500/20' 
+                    : transactions.length === 0
+                      ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed opacity-60'
+                      : 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-black/10 dark:shadow-white/10 hover:scale-[1.01]'
+                }`}
+              >
+                {isExportSuccess ? (
+                  <>
+                    <Check size={18} strokeWidth={3} />
+                    <span>{t.export_success}</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={18} strokeWidth={2.5} />
+                    <span>{t.export_csv_btn} ({transactions.length})</span>
+                  </>
+                )}
               </motion.button>
             </section>
 
@@ -2414,6 +2619,8 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh, t, p
   const [amount, setAmount] = useState(subscription?.amount.toString() || '');
   const [billingDate, setBillingDate] = useState(subscription?.nextBillingDate.split('T')[0] || new Date().toISOString().split('T')[0]);
   const [category, setCategory] = useState<TransactionCategory>(subscription?.category || 'bills');
+  const [wallet, setWallet] = useState<WalletType>(subscription?.wallet || 'bank');
+  const [autoDeduct, setAutoDeduct] = useState<boolean>(subscription?.autoDeduct === undefined ? true : Boolean(subscription.autoDeduct));
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   const handleSave = async () => {
@@ -2425,6 +2632,8 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh, t, p
         amount: parseFloat(amount),
         nextBillingDate: new Date(billingDate).toISOString(),
         category,
+        wallet,
+        autoDeduct: autoDeduct ? 1 : 0,
         userId: user.id
       });
       onRefresh();
@@ -2492,6 +2701,50 @@ function SubscriptionManagerModal({ user, subscription, onClose, onRefresh, t, p
               onChange={(e) => setBillingDate(e.target.value)}
               className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-300 dark:focus:border-white/20 transition-all font-bold"
             />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.subscription_wallet}</label>
+            <div className="flex p-1 bg-zinc-100 dark:bg-zinc-950 rounded-2xl border border-black/5 dark:border-white/5">
+              {(['bank', 'cash'] as const).map(w => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => setWallet(w)}
+                  className={`flex-1 py-3 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${wallet === w ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-400 dark:text-zinc-500'}`}
+                >
+                  {t[WALLET_LABELS[w]]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest px-1">{t.category}</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TransactionCategory)}
+              className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-zinc-300 dark:focus:border-white/20 transition-all font-bold text-xs"
+            >
+              {Object.entries(CATEGORIES).map(([catKey, catObj]) => (
+                <option key={catKey} value={catKey}>{t[catObj.label] || catKey}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="pt-1">
+            <div 
+              onClick={() => setAutoDeduct(!autoDeduct)}
+              className="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 rounded-2xl cursor-pointer hover:border-black/10 dark:hover:border-white/10 transition-all"
+            >
+              <div className="space-y-0.5 text-right flex-1 pr-1">
+                <span className="text-xs font-black text-zinc-900 dark:text-white block">{t.auto_deduct_subscription}</span>
+                <span className="text-[9px] text-zinc-400 font-bold block leading-tight">{t.auto_deduct_subscription_desc}</span>
+              </div>
+              <div className={`w-12 h-7 rounded-full p-1 transition-colors flex items-center shrink-0 ${autoDeduct ? 'bg-emerald-500 justify-end' : 'bg-zinc-300 dark:bg-zinc-800 justify-start'}`}>
+                <div className="w-5 h-5 rounded-full bg-white shadow-sm" />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3085,6 +3338,8 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
           amount: parseFloat(amount),
           nextBillingDate: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString(),
           category,
+          wallet,
+          autoDeduct: 1,
           userId: user.id
         });
       } catch (err) {
