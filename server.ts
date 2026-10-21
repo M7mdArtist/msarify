@@ -11,8 +11,19 @@ import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import nodeCrypto from "node:crypto";
+import { 
+  initDiscordBot, 
+  sendDiscordNotification, 
+  getDiscordStatus, 
+  regenerateDiscordKey, 
+  unlinkDiscord, 
+  setDiscordNotifications, 
+  linkDiscordManual,
+  generateDiscordKey 
+} from "./src/server/discordBot";
 
 dotenv.config();
+process.env.DISABLE_HMR = "true";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -119,6 +130,30 @@ try {
 try {
   db.exec("ALTER TABLE recurring_transactions ADD COLUMN autoProcess INTEGER DEFAULT 0");
 } catch (e) {}
+
+// Initialize Discord Notification Bot
+try {
+  initDiscordBot(db);
+} catch (err) {
+  console.warn("Could not initialize Discord bot:", err);
+}
+
+// Ensure a user record exists to prevent FOREIGN KEY constraint violations
+function ensureUserExists(userId: string, defaultName = "مستخدم") {
+  if (!userId) return;
+  try {
+    const existing = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
+    if (!existing) {
+      const freshKey = generateDiscordKey();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, displayName, email, currency, discordAccessKey, hasSeenTutorial)
+        VALUES (?, ?, ?, 'ر.س', ?, 1)
+      `).run(userId, userId === 'default' ? 'حسابي' : defaultName, `${userId}@local.app`, freshKey);
+    }
+  } catch (err) {
+    console.warn("ensureUserExists error:", err);
+  }
+}
 
 const VALID_CATEGORIES = new Set([
   'salary', 'living', 'bills', 'food', 'transport', 'health', 
@@ -276,6 +311,25 @@ function processSubscriptions(targetUserId?: string) {
             VALUES (?, ?, ?, ?, 0, ?)
           `).run(notifId, notifTitle, notifMsg, dateStr, sub.userId);
         })();
+
+        // 4. Dispatch Discord DM Notification if user has Discord linked
+        try {
+          const walletLabel = wallet === 'cash' ? 'كاش (نقدي)' : wallet === 'bank' ? 'الحساب البنكي' : wallet;
+          sendDiscordNotification(sub.userId, {
+            title: isAr ? '🔄 تجديد اشتراك تلقائي' : '🔄 Subscription Auto-Renewed',
+            description: isAr 
+              ? `تم خصم **${sub.amount} ${currency}** بنجاح لاشتراك **"${sub.name}"** من محفظة **${walletLabel}**.`
+              : `Successfully deducted **${sub.amount} ${currency}** for subscription **"${sub.name}"** from wallet **${walletLabel}**.`,
+            type: 'subscription',
+            fields: [
+              { name: isAr ? '💰 المبلغ المخصوم' : 'Amount', value: `${sub.amount} ${currency}`, inline: true },
+              { name: isAr ? '📅 التجديد القادم' : 'Next Renewal', value: new Date(nextBillingDateStr).toLocaleDateString(isAr ? 'ar-SA' : 'en-US'), inline: true },
+              { name: isAr ? '🏦 المحفظة' : 'Wallet', value: walletLabel, inline: true }
+            ]
+          });
+        } catch (discordErr) {
+          console.warn("Could not send Discord notification for subscription:", discordErr);
+        }
 
         console.log(`Auto-deducted subscription "${sub.name}" (${sub.amount}) for user ${sub.userId}`);
       }
@@ -672,47 +726,158 @@ async function startServer() {
 
   // User Routes
   app.get("/api/users/:uid", (req, res) => {
-    const user = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, isAdmin, siriToken, theme, language FROM users WHERE id = ?").get(req.params.uid);
-    if (user) {
-      user.hasSeenTutorial = !!user.hasSeenTutorial;
-      user.isAdmin = !!user.isAdmin;
+    try {
+      const uid = req.params.uid;
+      ensureUserExists(uid);
+      let user: any = db.prepare("SELECT id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, isAdmin, siriToken, discordAccessKey, discordUserId, discordUsername, discordNotificationsEnabled, theme, language FROM users WHERE id = ?").get(uid);
+      if (user) {
+        if (!user.discordAccessKey || user.discordAccessKey === '') {
+          const freshKey = generateDiscordKey();
+          db.prepare("UPDATE users SET discordAccessKey = ? WHERE id = ?").run(freshKey, user.id);
+          user.discordAccessKey = freshKey;
+        }
+        user.hasSeenTutorial = !!user.hasSeenTutorial;
+        user.isAdmin = !!user.isAdmin;
+        user.discordNotificationsEnabled = !!(user.discordNotificationsEnabled ?? 1);
+      }
+      res.json(user || null);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
-    res.json(user || null);
   });
 
   app.post("/api/users", (req, res) => {
-    const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, theme, language, privacyMode } = req.body;
-    db.prepare(`
-        UPDATE users SET
-          displayName = COALESCE(?, displayName),
-          email = COALESCE(?, email),
-          budgetThreshold = COALESCE(?, budgetThreshold),
-          initialCash = COALESCE(?, initialCash),
-          initialBank = COALESCE(?, initialBank),
-          currency = COALESCE(?, currency),
-          emergencyFund = COALESCE(?, emergencyFund),
-          savingsFund = COALESCE(?, savingsFund),
-          hasSeenTutorial = COALESCE(?, hasSeenTutorial),
-          theme = COALESCE(?, theme),
-          language = COALESCE(?, language),
-          privacyMode = COALESCE(?, privacyMode)
-        WHERE id = ?
-    `).run(
-      displayName, 
-      email, 
-      budgetThreshold, 
-      initialCash, 
-      initialBank, 
-      currency, 
-      emergencyFund, 
-      savingsFund, 
-      hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, 
-      theme, 
-      language, 
-      privacyMode !== undefined ? (privacyMode ? 1 : 0) : null,
-      id
-    );
-    res.json({ status: "ok" });
+    try {
+      const { id, displayName, email, budgetThreshold, initialCash, initialBank, currency, emergencyFund, savingsFund, hasSeenTutorial, theme, language, privacyMode } = req.body;
+      ensureUserExists(id, displayName);
+      db.prepare(`
+          UPDATE users SET
+            displayName = COALESCE(?, displayName),
+            email = COALESCE(?, email),
+            budgetThreshold = COALESCE(?, budgetThreshold),
+            initialCash = COALESCE(?, initialCash),
+            initialBank = COALESCE(?, initialBank),
+            currency = COALESCE(?, currency),
+            emergencyFund = COALESCE(?, emergencyFund),
+            savingsFund = COALESCE(?, savingsFund),
+            hasSeenTutorial = COALESCE(?, hasSeenTutorial),
+            theme = COALESCE(?, theme),
+            language = COALESCE(?, language),
+            privacyMode = COALESCE(?, privacyMode)
+          WHERE id = ?
+      `).run(
+        displayName, 
+        email, 
+        budgetThreshold, 
+        initialCash, 
+        initialBank, 
+        currency, 
+        emergencyFund, 
+        savingsFund, 
+        hasSeenTutorial !== undefined ? (hasSeenTutorial ? 1 : 0) : null, 
+        theme, 
+        language, 
+        privacyMode !== undefined ? (privacyMode ? 1 : 0) : null,
+        id
+      );
+      res.json({ status: "ok" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Discord Bot Routes
+  app.get("/api/discord/status/:uid", (req, res) => {
+    try {
+      const status = getDiscordStatus(req.params.uid);
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/discord/regenerate-key/:uid", (req, res) => {
+    try {
+      const newKey = regenerateDiscordKey(req.params.uid);
+      res.json({ discordAccessKey: newKey });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/discord/toggle-notifications/:uid", (req, res) => {
+    try {
+      const { enabled } = req.body;
+      setDiscordNotifications(req.params.uid, Boolean(enabled));
+      res.json({ success: true, enabled: Boolean(enabled) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/discord/unlink/:uid", (req, res) => {
+    try {
+      unlinkDiscord(req.params.uid);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/discord/test-notification/:uid", async (req, res) => {
+    try {
+      const user: any = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.uid);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const currency = user.currency || "ر.س";
+      const isAr = user.language !== "en";
+
+      const sent = await sendDiscordNotification(req.params.uid, {
+        title: isAr ? "🔔 تجربة إشعارات مصاريفي" : "🔔 Masarif Test Notification",
+        description: isAr
+          ? `أهلاً بك يا **${user.displayName || 'صديقنا'}**! ✨\nتم إرسال هذا الإشعار التجريبي لتأكيد نجاح ربط حسابك في تطبيق مصاريفي مع ديسكورد.\nستصلك إشعارات العمليات والاشتراكات هنا مباشرة!`
+          : `Hello **${user.displayName || 'User'}**! ✨\nThis test notification confirms your Masarif account is connected to Discord!\nYou will receive transaction and subscription alerts here.`,
+        color: 0x5865F2,
+        fields: [
+          { name: isAr ? "🟢 حالة الاتصال" : "Status", value: isAr ? "متصل بنجاح وجاهز" : "Connected & Ready", inline: true },
+          { name: isAr ? "💰 العملة المعتمدة" : "Currency", value: currency, inline: true }
+        ]
+      });
+
+      if (sent) {
+        res.json({ success: true, message: isAr ? "تم إرسال الإشعار التجريبي إلى رسائلك الخاصة في ديسكورد بنجاح!" : "Test notification sent to Discord DM!" });
+      } else {
+        res.status(400).json({ 
+          success: false, 
+          error: isAr 
+            ? "تعذر إرسال الإشعار. يرجى التأكد من إرسال كود مفتاح الوصول للبوت أولاً لربط الحساب وأن البوت متصل." 
+            : "Could not send notification. Ensure your account is linked by DMing the access key to the bot first." 
+        });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/discord/link-key", (req, res) => {
+    try {
+      const { accessKey, discordUserId, discordUsername, userId } = req.body;
+      if (userId && discordUserId) {
+        linkDiscordManual(userId, discordUserId, discordUsername || `@user_${discordUserId}`);
+        return res.json({ success: true });
+      }
+
+      if (!accessKey) return res.status(400).json({ error: "Access key is required" });
+      const cleanKey = accessKey.trim().toUpperCase();
+      const user: any = db.prepare("SELECT * FROM users WHERE UPPER(TRIM(discordAccessKey)) = ?").get(cleanKey);
+      if (!user) return res.status(404).json({ error: "Invalid access key" });
+
+      if (discordUserId) {
+        linkDiscordManual(user.id, discordUserId, discordUsername || `@user_${discordUserId}`);
+      }
+      res.json({ success: true, user: { id: user.id, displayName: user.displayName } });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Transaction Routes
@@ -725,13 +890,61 @@ async function startServer() {
   });
 
   app.post("/api/transactions", (req, res) => {
-    const { id, amount, description, date, category, type, necessity, wallet, toWallet, userId } = req.body;
-    const safeCat = sanitizeCategory(category);
-    db.prepare(`
-      INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, toWallet, userId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, amount, description, date, safeCat, type, necessity, wallet, toWallet, userId);
-    res.json({ status: "ok" });
+    try {
+      const { id, amount, description, date, category, type, necessity, wallet, toWallet, userId } = req.body;
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+      ensureUserExists(userId);
+      const safeCat = sanitizeCategory(category);
+      db.prepare(`
+        INSERT INTO transactions (id, amount, description, date, category, type, necessity, wallet, toWallet, userId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, amount, description, date, safeCat, type, necessity, wallet, toWallet, userId);
+
+      // Send Discord Notification safely
+      try {
+        const u: any = db.prepare("SELECT currency, language FROM users WHERE id = ?").get(userId);
+        const curr = u?.currency || 'ر.س';
+        const isAr = u?.language !== 'en';
+        const walletLabel = wallet === 'cash' ? (isAr ? 'كاش (نقدي)' : 'Cash') : wallet === 'bank' ? (isAr ? 'الحساب البنكي' : 'Bank') : wallet;
+        
+        let notifTitle = '';
+        let notifDesc = '';
+        if (type === 'expense') {
+          notifTitle = isAr ? '💸 تسجيل مصروف جديد' : '💸 New Expense';
+          notifDesc = isAr 
+            ? `تم تسجيل مصروف بقيمة **${amount} ${curr}**\n📝 **الوصف**: ${description}\n📂 **التصنيف**: ${safeCat}\n🏦 **المحفظة**: ${walletLabel}`
+            : `Expense of **${amount} ${curr}** recorded\n📝 **Description**: ${description}\n📂 **Category**: ${safeCat}\n🏦 **Wallet**: ${walletLabel}`;
+        } else if (type === 'income') {
+          notifTitle = isAr ? '💵 تسجيل دخل جديد' : '💵 New Income';
+          notifDesc = isAr 
+            ? `تم إيداع دخل بقيمة **${amount} ${curr}**\n📝 **الوصف**: ${description}\n🏦 **المحفظة**: ${walletLabel}`
+            : `Income of **${amount} ${curr}** received\n📝 **Description**: ${description}\n🏦 **Wallet**: ${walletLabel}`;
+        } else if (type === 'transfer') {
+          const toWalletLabel = toWallet === 'cash' ? (isAr ? 'كاش (نقدي)' : 'Cash') : toWallet === 'bank' ? (isAr ? 'الحساب البنكي' : 'Bank') : toWallet;
+          notifTitle = isAr ? '🔁 تحويل مالي بين المحافظ' : '🔁 Wallet Transfer';
+          notifDesc = isAr 
+            ? `تم تحويل **${amount} ${curr}** من **${walletLabel}** إلى **${toWalletLabel}**.`
+            : `Transferred **${amount} ${curr}** from **${walletLabel}** to **${toWalletLabel}**.`;
+        }
+
+        if (notifTitle) {
+          sendDiscordNotification(userId, {
+            title: notifTitle,
+            description: notifDesc,
+            type: type === 'expense' ? 'expense' : 'income'
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.warn("Could not dispatch transaction notification to Discord:", e);
+      }
+
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      console.error("Error creating transaction:", err);
+      res.status(500).json({ error: err.message || "Failed to create transaction" });
+    }
   });
 
   app.delete("/api/transactions/:id", (req, res) => {
@@ -758,6 +971,7 @@ async function startServer() {
     const { id, amount, description, category, type, wallet, frequency, userId, autoProcess } = req.body;
     const safeCat = sanitizeCategory(category);
     try {
+      ensureUserExists(userId);
       db.prepare(`
         INSERT INTO recurring_transactions (id, amount, description, category, type, wallet, frequency, autoProcess, userId)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -771,8 +985,8 @@ async function startServer() {
           autoProcess = excluded.autoProcess
       `).run(id, amount, description, safeCat, type, wallet, frequency, autoProcess !== undefined ? (autoProcess ? 1 : 0) : 0, userId);
       res.json({ status: "ok" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to save recurring transaction" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save recurring transaction" });
     }
   });
 
@@ -780,8 +994,8 @@ async function startServer() {
     try {
       db.prepare("DELETE FROM recurring_transactions WHERE id = ?").run(req.params.id);
       res.json({ status: "ok" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to delete recurring transaction" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to delete recurring transaction" });
     }
   });
 
@@ -795,22 +1009,27 @@ async function startServer() {
   });
 
   app.post("/api/subscriptions", (req, res) => {
-    const { id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId } = req.body;
-    const safeCat = sanitizeCategory(category);
-    const safeWallet = wallet === 'cash' ? 'cash' : 'bank';
-    const safeAutoDeduct = autoDeduct !== undefined ? (autoDeduct ? 1 : 0) : 1;
-    db.prepare(`
-      INSERT INTO subscriptions (id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        amount = excluded.amount,
-        nextBillingDate = excluded.nextBillingDate,
-        category = excluded.category,
-        wallet = excluded.wallet,
-        autoDeduct = excluded.autoDeduct
-    `).run(id, name, amount, nextBillingDate, safeCat, safeWallet, safeAutoDeduct, userId);
-    res.json({ status: "ok" });
+    try {
+      const { id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId } = req.body;
+      ensureUserExists(userId);
+      const safeCat = sanitizeCategory(category);
+      const safeWallet = wallet === 'cash' ? 'cash' : 'bank';
+      const safeAutoDeduct = autoDeduct !== undefined ? (autoDeduct ? 1 : 0) : 1;
+      db.prepare(`
+        INSERT INTO subscriptions (id, name, amount, nextBillingDate, category, wallet, autoDeduct, userId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          amount = excluded.amount,
+          nextBillingDate = excluded.nextBillingDate,
+          category = excluded.category,
+          wallet = excluded.wallet,
+          autoDeduct = excluded.autoDeduct
+      `).run(id, name, amount, nextBillingDate, safeCat, safeWallet, safeAutoDeduct, userId);
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save subscription" });
+    }
   });
 
   app.delete("/api/subscriptions/:id", (req, res) => {
@@ -825,12 +1044,17 @@ async function startServer() {
   });
 
   app.post("/api/snapshots", (req, res) => {
-    const { id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, transactions } = req.body;
-    db.prepare(`
-      INSERT INTO snapshots (id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, JSON.stringify(transactions));
-    res.json({ status: "ok" });
+    try {
+      const { id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, transactions } = req.body;
+      ensureUserExists(userId);
+      db.prepare(`
+        INSERT INTO snapshots (id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, date, totalAmount, cashAmount, bankAmount, transactionCount, userId, JSON.stringify(transactions));
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save snapshot" });
+    }
   });
 
   // Notification Routes
@@ -840,12 +1064,17 @@ async function startServer() {
   });
 
   app.post("/api/notifications", (req, res) => {
-    const { id, title, message, date, userId } = req.body;
-    db.prepare(`
-      INSERT INTO notifications (id, title, message, date, userId)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, title, message, date, userId);
-    res.json({ status: "ok" });
+    try {
+      const { id, title, message, date, userId } = req.body;
+      ensureUserExists(userId);
+      db.prepare(`
+        INSERT INTO notifications (id, title, message, date, userId)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(id, title, message, date, userId);
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save notification" });
+    }
   });
 
   app.post("/api/notifications/read-all/:uid", (req, res) => {
@@ -870,21 +1099,26 @@ async function startServer() {
   });
 
   app.post("/api/loans", (req, res) => {
-    const { id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId } = req.body;
-    db.prepare(`
-      INSERT INTO loans (id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        amount = excluded.amount,
-        remainingAmount = excluded.remainingAmount,
-        personName = excluded.personName,
-        description = excluded.description,
-        type = excluded.type,
-        status = excluded.status,
-        dueDate = excluded.dueDate,
-        wallet = excluded.wallet
-    `).run(id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId);
-    res.json({ status: "ok" });
+    try {
+      const { id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId } = req.body;
+      ensureUserExists(userId);
+      db.prepare(`
+        INSERT INTO loans (id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          amount = excluded.amount,
+          remainingAmount = excluded.remainingAmount,
+          personName = excluded.personName,
+          description = excluded.description,
+          type = excluded.type,
+          status = excluded.status,
+          dueDate = excluded.dueDate,
+          wallet = excluded.wallet
+      `).run(id, amount, remainingAmount, personName, description, type, status, dueDate, startDate, wallet, userId);
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save loan" });
+    }
   });
 
   app.post("/api/loans/:id/repay", (req, res) => {
@@ -967,15 +1201,20 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Vite middleware for development vs static production build
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+  const isDev = process.env.npm_lifecycle_event === "dev" || 
+                process.env.NODE_ENV === "development" || 
+                !hasDist;
+
+  if (isDev) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

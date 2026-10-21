@@ -13,6 +13,24 @@
     <meta name="theme-color" content="#09090b" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // Suppress Vite HMR / ModuleRunner WebSocket reconnection errors in AI Studio iframe environment
+      window.addEventListener('error', function(event) {
+        var msg = (event && (event.message || '')) + '';
+        var file = (event && event.filename) || '';
+        if (msg.includes('WebSocket') || msg.includes('createWebSocketModuleRunnerTransport') || file.includes('@vite/client')) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = '' + ((event && event.reason) || '');
+        if (reason.includes('WebSocket') || reason.includes('createWebSocketModuleRunnerTransport') || reason.includes('@vite/client')) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      }, true);
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -41,7 +41,15 @@ import {
   Palette,
   Download,
   FileSpreadsheet,
-  Check
+  Check,
+  Bot,
+  Send,
+  MessageSquare,
+  Unlink,
+  Key,
+  RefreshCw,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
@@ -87,7 +95,8 @@ import {
   WalletType,
   TransactionType,
   Snapshot,
-  AppNotification
+  AppNotification,
+  DiscordBotStatus
 } from './types';
 import { 
   subMonths, 
@@ -201,6 +210,14 @@ export default function App() {
   const [showRecurringModal, setShowRecurringModal] = useState<{ show: boolean, item?: any }>({ show: false });
   const [activeSubscriptionToast, setActiveSubscriptionToast] = useState<{ id: string; title: string; message: string } | null>(null);
   const [isExportSuccess, setIsExportSuccess] = useState(false);
+  const [discordStatus, setDiscordStatus] = useState<DiscordBotStatus | null>(null);
+  const [isDiscordKeyCopied, setIsDiscordKeyCopied] = useState(false);
+  const [isDiscordTesting, setIsDiscordTesting] = useState(false);
+  const [discordFeedback, setDiscordFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isRegeneratingDiscordKey, setIsRegeneratingDiscordKey] = useState(false);
+  const [showManualDiscordInput, setShowManualDiscordInput] = useState(false);
+  const [manualDiscordIdInput, setManualDiscordIdInput] = useState('');
+  const [manualDiscordTagInput, setManualDiscordTagInput] = useState('');
   const shownNotificationIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -267,7 +284,8 @@ export default function App() {
         api.getSnapshots(user.id),
         api.getNotifications(user.id),
         api.getLoans(user.id),
-        api.getRecurring(user.id)
+        api.getRecurring(user.id),
+        api.getDiscordStatus(user.id)
       ]);
 
       const [
@@ -277,11 +295,21 @@ export default function App() {
         snapsRes, 
         noticesRes, 
         loanListRes, 
-        recurringListRes
+        recurringListRes,
+        discordStatusRes
       ] = results;
+
+      if (discordStatusRes && discordStatusRes.status === 'fulfilled' && discordStatusRes.value) {
+        setDiscordStatus(discordStatusRes.value);
+      }
 
       if (uProfileRes.status === 'fulfilled' && uProfileRes.value) {
         const uProfile = uProfileRes.value;
+        setUser((prev: any) => {
+          if (!prev) return uProfile;
+          const isChanged = Object.keys(uProfile).some(key => prev[key] !== (uProfile as any)[key]);
+          return isChanged ? { ...prev, ...uProfile } : prev;
+        });
         setUserBudget(uProfile.budgetThreshold || 0);
         
         // Preserve currency if it exists in profile, otherwise use language-based default
@@ -343,15 +371,16 @@ export default function App() {
     }
   };
 
+  const currentUserId = user?.id;
   useEffect(() => {
-    if (user) {
+    if (currentUserId) {
       refreshData();
     } else {
       setTransactions([]);
       setSubscriptions([]);
       setSnapshots([]);
     }
-  }, [user, activeTab]);
+  }, [currentUserId, activeTab]);
 
   const handleLogout = () => {
     localStorage.removeItem('user');
@@ -610,6 +639,120 @@ export default function App() {
     setTimeout(() => setIsExportSuccess(false), 4000);
   };
 
+  const handleCopyDiscordKey = () => {
+    const key = user?.discordAccessKey || discordStatus?.discordAccessKey;
+    if (key) {
+      navigator.clipboard.writeText(key);
+      setIsDiscordKeyCopied(true);
+      setTimeout(() => setIsDiscordKeyCopied(false), 3000);
+    }
+  };
+
+  const handleRegenerateDiscordKey = async () => {
+    if (!user) return;
+    setIsRegeneratingDiscordKey(true);
+    try {
+      const res = await api.regenerateDiscordKey(user.id);
+      if (res.discordAccessKey) {
+        setUser({ ...user, discordAccessKey: res.discordAccessKey });
+        setDiscordStatus(prev => prev ? { ...prev, discordAccessKey: res.discordAccessKey } : null);
+        setDiscordFeedback({
+          type: 'success',
+          message: language === 'ar' ? 'تم توليد مفتاح وصول جديد بنجاح!' : 'New access key generated successfully!'
+        });
+        setTimeout(() => setDiscordFeedback(null), 4000);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsRegeneratingDiscordKey(false);
+    }
+  };
+
+  const handleToggleDiscordNotifications = async () => {
+    if (!user) return;
+    const currentEnabled = discordStatus?.notificationsEnabled ?? user.discordNotificationsEnabled ?? true;
+    const nextState = !currentEnabled;
+    try {
+      await api.toggleDiscordNotifications(user.id, nextState);
+      setDiscordStatus(prev => prev ? { ...prev, notificationsEnabled: nextState } : null);
+      setUser({ ...user, discordNotificationsEnabled: nextState });
+      setDiscordFeedback({
+        type: 'success',
+        message: nextState 
+          ? (language === 'ar' ? 'تم تفعيل إشعارات ديسكورد' : 'Discord notifications enabled')
+          : (language === 'ar' ? 'تم إيقاف إشعارات ديسكورد مؤقتاً' : 'Discord notifications disabled')
+      });
+      setTimeout(() => setDiscordFeedback(null), 3000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUnlinkDiscord = async () => {
+    if (!user) return;
+    try {
+      await api.unlinkDiscord(user.id);
+      setDiscordStatus(prev => prev ? { ...prev, isLinked: false, discordUsername: undefined, discordUserId: undefined } : null);
+      setUser({ ...user, discordUserId: undefined, discordUsername: undefined });
+      setDiscordFeedback({
+        type: 'success',
+        message: language === 'ar' ? 'تم إلغاء ربط حساب ديسكورد بنجاح' : 'Discord unlinked successfully'
+      });
+      setTimeout(() => setDiscordFeedback(null), 4000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSendDiscordTest = async () => {
+    if (!user) return;
+    setIsDiscordTesting(true);
+    setDiscordFeedback(null);
+    try {
+      const res = await api.sendDiscordTestNotification(user.id);
+      if (res.success) {
+        setDiscordFeedback({
+          type: 'success',
+          message: res.message || (language === 'ar' ? 'تم إرسال الإشعار إلى ديسكورد بنجاح!' : 'Test notification sent to Discord!')
+        });
+      } else {
+        setDiscordFeedback({
+          type: 'error',
+          message: res.error || (language === 'ar' ? 'تعذر إرسال الإشعار. تأكد من ربط الحساب أولاً.' : 'Failed to send notification. Link account first.')
+        });
+      }
+    } catch (e: any) {
+      setDiscordFeedback({
+        type: 'error',
+        message: language === 'ar' ? 'حدث خطأ أثناء إرسال الإشعار التجريبي' : 'Error sending test notification'
+      });
+    } finally {
+      setIsDiscordTesting(false);
+      setTimeout(() => setDiscordFeedback(null), 5000);
+    }
+  };
+
+  const handleManualLinkDiscord = async () => {
+    if (!user || !manualDiscordIdInput.trim()) return;
+    try {
+      await api.linkDiscordManual(user.id, manualDiscordIdInput.trim(), manualDiscordTagInput.trim() || undefined);
+      const updated = await api.getDiscordStatus(user.id);
+      setDiscordStatus(updated);
+      setUser({ ...user, discordUserId: manualDiscordIdInput.trim(), discordUsername: manualDiscordTagInput.trim() || undefined });
+      setShowManualDiscordInput(false);
+      setManualDiscordIdInput('');
+      setManualDiscordTagInput('');
+      setDiscordFeedback({
+        type: 'success',
+        message: language === 'ar' ? 'تم ربط حساب ديسكورد بنجاح!' : 'Discord account linked!'
+      });
+      setTimeout(() => setDiscordFeedback(null), 4000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleAddTransaction = async (t: Omit<Transaction, 'id'>) => {
     if (!user) return;
     try {
@@ -622,8 +765,10 @@ export default function App() {
       setLastTransactionId(id);
       refreshData();
       setShowAddModal(false);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Error in handleAddTransaction:", err);
+      alert(language === 'ar' ? 'حدث خطأ أثناء حفظ العملية: ' + (err.message || 'يرجى المحاولة مرة أخرى') : 'Error saving transaction: ' + (err.message || 'Please try again'));
+      throw err;
     }
   };
 
@@ -1663,6 +1808,270 @@ export default function App() {
               >
                 {user?.siriToken ? t.renew_key : t.generate_key}
               </motion.button>
+            </section>
+
+            {/* Discord Bot Notification Section */}
+            <section className="bg-gradient-to-br from-[#5865F2]/10 via-zinc-100 to-indigo-500/5 dark:from-[#5865F2]/15 dark:via-white/[0.02] dark:to-indigo-500/10 backdrop-blur-3xl rounded-[3rem] border border-[#5865F2]/25 dark:border-[#5865F2]/30 p-8 space-y-6 relative overflow-hidden group shadow-lg shadow-[#5865F2]/5">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-[#5865F2]/15 rounded-full blur-[80px] -translate-y-16 translate-x-16 pointer-events-none"></div>
+
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4 relative z-10">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-[#5865F2] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#5865F2]/30 group-hover:scale-105 transition-transform">
+                    <Bot size={28} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h4 className="font-black text-zinc-900 dark:text-white text-lg tracking-tight italic">
+                        {t.discord_bot}
+                      </h4>
+                      <span className="text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-[#5865F2]/15 text-[#5865F2] dark:text-[#8E97F8] border border-[#5865F2]/30">
+                        DISCORD
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold leading-relaxed mt-1">
+                      {t.discord_bot_desc}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Pill */}
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-[10px] font-black">
+                  <span className={`w-2 h-2 rounded-full ${discordStatus?.botOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+                  <span className={discordStatus?.botOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                    {discordStatus?.botOnline ? t.discord_online : t.discord_standby}
+                  </span>
+                </div>
+              </div>
+
+              {/* Bot Identity & Direct Message (DM) Link Card */}
+              {discordStatus?.botUsername && (
+                <div className="p-5 bg-white/90 dark:bg-zinc-950/80 border border-[#5865F2]/30 rounded-[2.5rem] flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10 shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    {discordStatus.botAvatar ? (
+                      <img src={discordStatus.botAvatar} alt="Bot Avatar" className="w-12 h-12 rounded-2xl shadow-md border border-[#5865F2]/30 object-cover" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-2xl bg-[#5865F2] text-white flex items-center justify-center shadow-md shadow-[#5865F2]/20 shrink-0">
+                        <Bot size={24} />
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold uppercase tracking-wider">
+                          {t.discord_bot_username}
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                          {t.discord_online}
+                        </span>
+                      </div>
+                      <p className="font-mono font-black text-sm text-[#5865F2] dark:text-[#8E97F8] tracking-wide mt-0.5">
+                        @{discordStatus.botUsername}
+                      </p>
+                    </div>
+                  </div>
+
+                  {discordStatus.botDmUrl && (
+                    <a
+                      href={discordStatus.botDmUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-3 px-5 bg-[#5865F2] hover:bg-[#4752C4] text-white rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-[#5865F2]/25 transition-all transform active:scale-95 text-center shrink-0 cursor-pointer"
+                    >
+                      <MessageSquare size={15} />
+                      <span>{t.discord_open_dm}</span>
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Access Key Display Box */}
+              <div className="p-6 bg-white/80 dark:bg-zinc-950/70 backdrop-blur-2xl rounded-[2.5rem] border border-[#5865F2]/20 dark:border-white/10 space-y-4 relative z-10 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Key size={15} className="text-[#5865F2]" />
+                    <span className="text-[10px] text-zinc-600 dark:text-zinc-300 font-black uppercase tracking-wider">
+                      {t.discord_key}
+                    </span>
+                  </div>
+                  {discordStatus?.isLinked && (
+                    <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Check size={10} strokeWidth={3} />
+                      {t.discord_linked} {discordStatus.discordUsername ? `(@${discordStatus.discordUsername})` : ''}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 bg-zinc-100 dark:bg-black/40 py-4 px-5 rounded-2xl text-center font-mono font-black text-sm tracking-widest text-[#5865F2] dark:text-[#8E97F8] border border-[#5865F2]/20 dark:border-white/5 select-all">
+                    {user?.discordAccessKey || discordStatus?.discordAccessKey || 'MSF-••••-••••'}
+                  </div>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.92 }}
+                    onClick={handleCopyDiscordKey}
+                    title="نسخ الكود"
+                    className={`w-13 h-13 rounded-2xl flex items-center justify-center transition-all shadow-md ${
+                      isDiscordKeyCopied 
+                        ? 'bg-emerald-500 text-white' 
+                        : 'bg-[#5865F2] hover:bg-[#4752C4] text-white'
+                    }`}
+                  >
+                    {isDiscordKeyCopied ? <Check size={20} strokeWidth={3} /> : <Copy size={20} />}
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.92 }}
+                    onClick={handleRegenerateDiscordKey}
+                    disabled={isRegeneratingDiscordKey}
+                    title={t.discord_renew_key}
+                    className="w-13 h-13 rounded-2xl bg-zinc-200 dark:bg-white/10 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-white/15 flex items-center justify-center transition-all shadow-sm"
+                  >
+                    <RefreshCw size={18} className={isRegeneratingDiscordKey ? 'animate-spin' : ''} />
+                  </motion.button>
+                </div>
+
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold leading-relaxed text-center">
+                  {t.discord_key_desc}
+                </p>
+              </div>
+
+              {/* Instructions Guide */}
+              <div className="p-5 bg-white/50 dark:bg-white/[0.02] rounded-2xl border border-zinc-200/80 dark:border-white/5 space-y-2.5 relative z-10">
+                <div className="text-[10px] font-black uppercase tracking-wider text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+                  <MessageSquare size={13} className="text-[#5865F2]" />
+                  <span>{t.discord_how_to_link}</span>
+                </div>
+                <div className="space-y-2 text-[11px] font-bold text-zinc-500 dark:text-zinc-400">
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-[#5865F2]/20 text-[#5865F2] flex items-center justify-center text-[9px] font-black shrink-0 mt-0.5">1</span>
+                    <div className="flex-1">
+                      <span>{t.discord_step1}</span>
+                      {discordStatus?.botDmUrl && (
+                        <a
+                          href={discordStatus.botDmUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[10px] text-[#5865F2] dark:text-[#8E97F8] font-black underline underline-offset-2 mt-1 hover:opacity-80 block"
+                        >
+                          <span>💬 {language === 'ar' ? `اضغط هنا لفتح شات الخاص مع @${discordStatus.botUsername || 'البوت'} مباشرة` : `Click here to DM @${discordStatus.botUsername || 'the bot'} directly`}</span>
+                          <ExternalLink size={11} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-[#5865F2]/20 text-[#5865F2] flex items-center justify-center text-[9px] font-black shrink-0 mt-0.5">2</span>
+                    <span>{t.discord_step2} (<code className="font-mono text-[#5865F2] dark:text-[#8E97F8]">{user?.discordAccessKey || 'MSF-XXXX-XXXX'}</code>)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-[#5865F2]/20 text-[#5865F2] flex items-center justify-center text-[9px] font-black shrink-0 mt-0.5">3</span>
+                    <span>{t.discord_step3}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feedback Toast */}
+              {discordFeedback && (
+                <div className={`p-4 rounded-2xl text-xs font-black flex items-center gap-2.5 transition-all relative z-10 ${
+                  discordFeedback.type === 'success' 
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                }`}>
+                  {discordFeedback.type === 'success' ? <Check size={16} strokeWidth={2.5} /> : <Info size={16} />}
+                  <span>{discordFeedback.message}</span>
+                </div>
+              )}
+
+              {/* Action Buttons & Preferences */}
+              <div className="space-y-3 relative z-10">
+                <div className="flex flex-wrap items-center gap-3">
+                  <motion.button 
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSendDiscordTest}
+                    disabled={isDiscordTesting}
+                    className="flex-1 min-w-[160px] py-4 px-5 bg-[#5865F2] hover:bg-[#4752C4] text-white font-black text-xs rounded-2xl shadow-lg shadow-[#5865F2]/25 flex items-center justify-center gap-2 transition-all disabled:opacity-60"
+                  >
+                    {isDiscordTesting ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Send size={16} />
+                    )}
+                    <span>{t.discord_test_notif}</span>
+                  </motion.button>
+
+                  {discordStatus?.isLinked && (
+                    <motion.button 
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleToggleDiscordNotifications}
+                      className={`py-4 px-4 font-black text-xs rounded-2xl transition-all border ${
+                        (discordStatus?.notificationsEnabled ?? true)
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                          : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
+                      }`}
+                    >
+                      {(discordStatus?.notificationsEnabled ?? true) ? '🟢 الإشعارات مفعلة' : '⚪ الإشعارات معطلة'}
+                    </motion.button>
+                  )}
+
+                  {discordStatus?.isLinked ? (
+                    <motion.button 
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleUnlinkDiscord}
+                      className="py-4 px-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-black text-xs rounded-2xl transition-all flex items-center gap-1.5"
+                    >
+                      <Unlink size={16} />
+                      <span>{t.discord_unlink}</span>
+                    </motion.button>
+                  ) : (
+                    <motion.button 
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setShowManualDiscordInput(!showManualDiscordInput)}
+                      className="py-4 px-4 bg-zinc-200 dark:bg-white/10 hover:bg-zinc-300 dark:hover:bg-white/15 text-zinc-700 dark:text-zinc-300 font-black text-xs rounded-2xl transition-all"
+                    >
+                      {language === 'ar' ? 'ربط يدوي بالـ ID' : 'Manual Link'}
+                    </motion.button>
+                  )}
+                </div>
+
+                {/* Manual Link Input Form */}
+                {showManualDiscordInput && !discordStatus?.isLinked && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="p-5 bg-white/70 dark:bg-zinc-950/80 rounded-2xl border border-zinc-200 dark:border-white/10 space-y-3"
+                  >
+                    <div className="text-[11px] font-black text-zinc-700 dark:text-zinc-300">
+                      {language === 'ar' ? 'ربط الحساب بمعرف ديسكورد (Discord User ID):' : 'Link via Discord User ID:'}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input 
+                        type="text"
+                        placeholder={language === 'ar' ? 'معرف ديسكورد (مثال: 1234567890)' : 'Discord User ID (e.g. 1234567890)'}
+                        value={manualDiscordIdInput}
+                        onChange={(e) => setManualDiscordIdInput(e.target.value)}
+                        className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-xl px-3 py-2 text-xs font-mono"
+                      />
+                      <input 
+                        type="text"
+                        placeholder={language === 'ar' ? 'اسم المستخدم (اختياري)' : 'Username (optional)'}
+                        value={manualDiscordTagInput}
+                        onChange={(e) => setManualDiscordTagInput(e.target.value)}
+                        className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-xl px-3 py-2 text-xs"
+                      />
+                    </div>
+                    <button 
+                      onClick={handleManualLinkDiscord}
+                      disabled={!manualDiscordIdInput.trim()}
+                      className="w-full py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black text-xs rounded-xl shadow-md disabled:opacity-50"
+                    >
+                      {language === 'ar' ? 'تأكيد الربط المباشر' : 'Confirm Link'}
+                    </button>
+                  </motion.div>
+                )}
+              </div>
             </section>
 
             {/* Data Export Section */}
@@ -3173,6 +3582,7 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
   const [toWallet, setToWallet] = useState<WalletType>('cash');
   const [isSubscription, setIsSubscription] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -3322,42 +3732,49 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !user) return;
+    if (!amount || !user || isSubmitting) return;
+    setIsSubmitting(true);
     
-    // Auto-description for transfers
-    const cat = getCategory(category);
-    const finalDescription = type === 'transfer' 
-      ? `${t.transfer_from} ${WALLET_LABELS[wallet] ? t[WALLET_LABELS[wallet]] : ''} ${t.to_label} ${WALLET_LABELS[toWallet] ? t[WALLET_LABELS[toWallet]] : ''}`
-      : description || (cat && t[cat.label]) || t.cat_other;
+    try {
+      // Auto-description for transfers
+      const cat = getCategory(category);
+      const finalDescription = type === 'transfer' 
+        ? `${t.transfer_from} ${WALLET_LABELS[wallet] ? t[WALLET_LABELS[wallet]] : ''} ${t.to_label} ${WALLET_LABELS[toWallet] ? t[WALLET_LABELS[toWallet]] : ''}`
+        : description || (cat && t[cat.label]) || t.cat_other;
 
-    if (isSubscription) {
-      try {
-        await api.saveSubscription({
-          id: crypto.randomUUID(),
-          name: finalDescription,
-          amount: parseFloat(amount),
-          nextBillingDate: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString(),
-          category,
-          wallet,
-          autoDeduct: 1,
-          userId: user.id
-        });
-      } catch (err) {
-        console.error(err);
+      if (isSubscription) {
+        try {
+          await api.saveSubscription({
+            id: crypto.randomUUID(),
+            name: finalDescription,
+            amount: parseFloat(amount),
+            nextBillingDate: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString(),
+            category,
+            wallet,
+            autoDeduct: 1,
+            userId: user.id
+          });
+        } catch (err) {
+          console.error(err);
+        }
       }
-    }
 
-    onAdd({
-      amount: parseFloat(amount),
-      description: finalDescription,
-      category,
-      type,
-      necessity,
-      wallet,
-      toWallet: type === 'transfer' ? toWallet : undefined,
-      date: new Date().toISOString(),
-      userId: user.id
-    });
+      await onAdd({
+        amount: parseFloat(amount),
+        description: finalDescription,
+        category,
+        type,
+        necessity,
+        wallet,
+        toWallet: type === 'transfer' ? toWallet : undefined,
+        date: new Date().toISOString(),
+        userId: user.id
+      });
+    } catch (err) {
+      console.error("Submission error:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -3648,12 +4065,19 @@ function QuickAddModal({ user, onClose, onAdd, appCurrency, t, language, privacy
         <div className="mt-auto space-y-4 pt-10">
           <button 
             type="submit"
-            disabled={!amount}
-            className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all transform active:scale-95 italic tracking-tight ${
-              !amount ? 'bg-zinc-100 dark:bg-zinc-900 text-zinc-300 dark:text-zinc-800 cursor-not-allowed' : 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-white/10 ring-8 ring-zinc-50 dark:ring-zinc-950'
+            disabled={!amount || isSubmitting}
+            className={`w-full py-6 rounded-[2.5rem] font-black text-xl shadow-2xl transition-all transform active:scale-95 italic tracking-tight flex items-center justify-center gap-3 ${
+              !amount || isSubmitting ? 'bg-zinc-100 dark:bg-zinc-900 text-zinc-300 dark:text-zinc-800 cursor-not-allowed' : 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 shadow-white/10 ring-8 ring-zinc-50 dark:ring-zinc-950'
             }`}
           >
-            {t.confirm_transaction}
+            {isSubmitting ? (
+              <>
+                <Loader2 size={24} className="animate-spin" />
+                <span>{t.saving || 'جاري الحفظ...'}</span>
+              </>
+            ) : (
+              t.confirm_transaction
+            )}
           </button>
           <p className="text-center text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-widest pb-8 italic">{t.cloud_save_notice}</p>
         </div>

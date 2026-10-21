@@ -73,6 +73,23 @@ export interface UserProfile {
   theme?: 'dark' | 'light';
   language?: 'ar' | 'en';
   privacyMode?: boolean;
+  discordAccessKey?: string;
+  discordUserId?: string;
+  discordUsername?: string;
+  discordNotificationsEnabled?: boolean;
+}
+
+export interface DiscordBotStatus {
+  botOnline: boolean;
+  botUsername?: string;
+  botId?: string;
+  botAvatar?: string;
+  botDmUrl?: string;
+  isLinked: boolean;
+  discordUsername?: string;
+  discordUserId?: string;
+  discordAccessKey?: string;
+  notificationsEnabled?: boolean;
 }
 
 export interface AppNotification {

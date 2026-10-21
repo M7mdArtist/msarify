@@ -1,4 +1,4 @@
-import { Transaction, Subscription, Snapshot, UserProfile } from "../types";
+import { Transaction, Subscription, Snapshot, UserProfile, DiscordBotStatus } from "../types";
 
 const API_BASE = "/api";
 
@@ -55,11 +55,15 @@ export const api = {
   },
 
   async addTransaction(t: Transaction): Promise<void> {
-    await fetch(`${API_BASE}/transactions`, {
+    const res = await fetch(`${API_BASE}/transactions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(t),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Error ${res.status}`);
+    }
   },
 
   async deleteTransaction(id: string): Promise<void> {
@@ -233,5 +237,44 @@ export const api = {
       // Fallback
       return { "USD": 0.27, "SAR": 1, "KWD": 0.082, "AED": 0.98 };
     }
+  },
+
+  // Discord Bot
+  async getDiscordStatus(uid: string): Promise<DiscordBotStatus> {
+    const res = await fetch(`${API_BASE}/discord/status/${uid}`);
+    return res.json();
+  },
+
+  async regenerateDiscordKey(uid: string): Promise<{ discordAccessKey: string }> {
+    const res = await fetch(`${API_BASE}/discord/regenerate-key/${uid}`, { method: "POST" });
+    return res.json();
+  },
+
+  async toggleDiscordNotifications(uid: string, enabled: boolean): Promise<any> {
+    const res = await fetch(`${API_BASE}/discord/toggle-notifications/${uid}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    return res.json();
+  },
+
+  async unlinkDiscord(uid: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/discord/unlink/${uid}`, { method: "POST" });
+    return res.json();
+  },
+
+  async sendDiscordTestNotification(uid: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    const res = await fetch(`${API_BASE}/discord/test-notification/${uid}`, { method: "POST" });
+    return res.json();
+  },
+
+  async linkDiscordManual(userId: string, discordUserId: string, discordUsername?: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/discord/link-key`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, discordUserId, discordUsername }),
+    });
+    return res.json();
   }
 };

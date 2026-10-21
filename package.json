@@ -7,6 +7,7 @@
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
+    "deploy": "bash deploy.sh",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -20,6 +21,7 @@
     "clsx": "^2.1.1",
     "cors": "^2.8.6",
     "date-fns": "^4.1.0",
+    "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "express": "^4.22.1",
     "jsonwebtoken": "^9.0.3",
