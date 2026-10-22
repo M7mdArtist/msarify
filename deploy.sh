@@ -7,10 +7,22 @@
 set -e
 
 APP_NAME="msarify"
-PORT="${PORT:-3000}"
+
+# Read PORT from .env if present, otherwise default to 3000
+PORT="3000"
+if [ -f .env ]; then
+  ENV_PORT=$(grep -E '^\s*PORT=' .env | cut -d '=' -f2 | tr -d ' "\r\n' || true)
+  if [ -n "$ENV_PORT" ]; then
+    PORT="$ENV_PORT"
+  fi
+fi
+if [ -n "$SERVER_PORT" ]; then
+  PORT="$SERVER_PORT"
+fi
 
 echo "======================================================"
 echo "🚀 بدء عملية النشر والتحديث (Deployment Script)"
+echo "📡 المنفذ المحدد للتطبيق: $PORT"
 echo "======================================================"
 
 # 1. Pull latest changes if inside a Git repository
@@ -23,15 +35,18 @@ else
 fi
 
 # 2. Check and prepare database directory
-if [ -n "$DB_PATH" ]; then
-  DB_DIR=$(dirname "$DB_PATH")
-  if [ ! -d "$DB_DIR" ]; then
-    echo "📁 إنشاء مجلد قاعدة البيانات: $DB_DIR"
-    mkdir -p "$DB_DIR" 2>/dev/null || true
+if [ -f .env ]; then
+  ENV_DB_PATH=$(grep -E '^\s*DB_PATH=' .env | cut -d '=' -f2 | tr -d ' "\r\n' || true)
+  if [ -n "$ENV_DB_PATH" ]; then
+    DB_DIR=$(dirname "$ENV_DB_PATH")
+    if [ ! -d "$DB_DIR" ]; then
+      echo "📁 إنشاء مجلد قاعدة البيانات: $DB_DIR"
+      mkdir -p "$DB_DIR" 2>/dev/null || true
+    fi
   fi
 fi
 
-# 3. Install dependencies
+# 3. Install dependencies (including tsx for running server)
 echo "📦 تثبيت الحزم والاعتماديات (npm install)..."
 npm install --prefer-offline --no-audit || npm install
 
@@ -39,13 +54,17 @@ npm install --prefer-offline --no-audit || npm install
 echo "🏗️ بناء الواجهة الأمامية (npm run build)..."
 npm run build
 
-# 5. Start or Restart process
+# 5. Start or Restart process via PM2
 echo "🔄 التحقق من تشغيل الموقع عبر PM2..."
 
 if command -v pm2 >/dev/null 2>&1; then
   if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-    echo "🔄 العملية '$APP_NAME' تعمل حالياً، جاري إعادة تشغيلها وتحديث المتغيرات..."
-    pm2 reload "$APP_NAME" --update-env 2>/dev/null || pm2 restart "$APP_NAME" --update-env
+    echo "🔄 العملية '$APP_NAME' مسجلة في PM2، جاري إعادة تشغيلها وتحديث المتغيرات..."
+    pm2 restart "$APP_NAME" --update-env 2>/dev/null || pm2 restart ecosystem.config.cjs --update-env 2>/dev/null || {
+      echo "⚠️ إعادة التشغيل واجهت مشكلة، جاري حذف العملية القديمة وبدء تشغيل نظيف..."
+      pm2 delete "$APP_NAME" 2>/dev/null || true
+      pm2 start ecosystem.config.cjs --update-env
+    }
   else
     echo "⚡ العملية '$APP_NAME' ليست قيد التشغيل. جاري تشغيلها الآن..."
     if [ -f "ecosystem.config.cjs" ]; then
@@ -53,36 +72,39 @@ if command -v pm2 >/dev/null 2>&1; then
     else
       pm2 start npm --name "$APP_NAME" -- start --update-env
     fi
-    pm2 save
-    echo "✅ تم تشغيل العملية بنجاح وحفظها في PM2."
   fi
+  pm2 save
+  echo "✅ تم حفظ تكوين PM2 بنجاح."
 else
   echo "⚠️ تنبيه: PM2 غير مثبت في النظام."
-  # Check if site is already running on port
   if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
     echo "ℹ️ الموقع يستجيب ويعمل حالياً على المنفذ $PORT."
   else
     echo "⚡ جاري تشغيل الموقع في الخلفية عبر nohup..."
     nohup npm start > app.log 2>&1 &
-    sleep 2
+    sleep 3
     echo "💡 يُنصح بتثبيت PM2 لإدارة الموقع تلقائياً: npm install -g pm2"
   fi
 fi
 
 # 6. Health check
-echo "🩺 التحقق من استجابة الموقع (Health Check)..."
-sleep 3
+echo "🩺 التحقق من استجابة الموقع (Health Check على المنفذ $PORT)..."
+sleep 4
 
 HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT" || echo "000")
 
 if [ "$HEALTH_STATUS" = "200" ] || [ "$HEALTH_STATUS" = "302" ] || [ "$HEALTH_STATUS" = "304" ]; then
   echo "======================================================"
   echo "✅ تم النشر وتشغيل الموقع بنجاح تام! 🎉"
-  echo "🌐 الموقع متاح ويعمل الآن على: http://localhost:$PORT"
+  echo "🌐 التطبيق متاح ويعمل محلياً على: http://localhost:$PORT"
   echo "======================================================"
 else
   echo "======================================================"
-  echo "⚠️ تنبيه: رمز الاستجابة هو ($HEALTH_STATUS)."
-  echo "يرجى التحقق من السجلات عبر الأمر: pm2 logs $APP_NAME"
+  echo "⚠️ تنبيه: رمز الاستجابة هو ($HEALTH_STATUS) على المنفذ $PORT."
+  echo "📋 آخر 20 سطر من سجلات PM2 لتشخيص السبب:"
+  echo "------------------------------------------------------"
+  pm2 logs "$APP_NAME" --lines 20 --nostream 2>/dev/null || true
+  echo "------------------------------------------------------"
+  echo "💡 إذا كان Nginx يعرض 502 Bad Gateway، يرجى التأكد من أن المنفذ في Nginx يطابق المنفذ ($PORT)."
   echo "======================================================"
 fi

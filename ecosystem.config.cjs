@@ -2,8 +2,8 @@ module.exports = {
   apps: [
     {
       name: "msarify",
-      script: "npm",
-      args: "start",
+      script: "node_modules/.bin/tsx",
+      args: "server.ts",
       instances: 1,
       autorestart: true,
       watch: false,

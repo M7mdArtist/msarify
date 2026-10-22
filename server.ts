@@ -38,7 +38,7 @@ try {
   }
 } catch (e) {
   console.warn("Could not create directory for DB_PATH, using local fallback:", e);
-  dbPath = path.resolve(__dirname, "data.db");
+  dbPath = path.resolve(process.cwd(), "data.db");
 }
 
 let db: any;
@@ -46,31 +46,41 @@ try {
   db = new Database(dbPath);
 } catch (e) {
   console.warn("Failed to open DB at", dbPath, "falling back to local data.db:", e);
-  dbPath = path.resolve(__dirname, "data.db");
-  db = new Database(dbPath);
+  try {
+    dbPath = path.resolve(process.cwd(), "data.db");
+    db = new Database(dbPath);
+  } catch (err2) {
+    console.warn("Failed to open local data.db, falling back to /tmp/msarify_data.db:", err2);
+    dbPath = path.resolve("/tmp", "msarify_data.db");
+    db = new Database(dbPath);
+  }
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-123";
 
-// Initialize Database Schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    displayName TEXT,
-    email TEXT UNIQUE,
-    password TEXT,
-    budgetThreshold REAL DEFAULT 0,
-    initialCash REAL DEFAULT 0,
-    initialBank REAL DEFAULT 0,
-    currency TEXT DEFAULT 'ر.س',
-    emergencyFund REAL DEFAULT 0,
-    savingsFund REAL DEFAULT 0,
-    hasSeenTutorial INTEGER DEFAULT 0,
-    isAdmin INTEGER DEFAULT 0,
-    theme TEXT DEFAULT 'dark',
-    language TEXT DEFAULT 'ar'
-  );
-`);
+// Initialize Database Schema safely
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      displayName TEXT,
+      email TEXT UNIQUE,
+      password TEXT,
+      budgetThreshold REAL DEFAULT 0,
+      initialCash REAL DEFAULT 0,
+      initialBank REAL DEFAULT 0,
+      currency TEXT DEFAULT 'ر.س',
+      emergencyFund REAL DEFAULT 0,
+      savingsFund REAL DEFAULT 0,
+      hasSeenTutorial INTEGER DEFAULT 0,
+      isAdmin INTEGER DEFAULT 0,
+      theme TEXT DEFAULT 'dark',
+      language TEXT DEFAULT 'ar'
+    );
+  `);
+} catch (e) {
+  console.error("Schema initialization warning:", e);
+}
 
 // Migration for existing databases
 try {
@@ -1221,9 +1231,21 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`❌ Port ${PORT} is already in use by another process!`);
+      process.exit(1);
+    } else {
+      console.error("❌ Server listen error:", err);
+    }
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Fatal error starting server:", err);
+  process.exit(1);
+});
