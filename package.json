@@ -8,6 +8,7 @@
     "start": "tsx server.ts",
     "build": "vite build",
     "deploy": "bash deploy.sh",
+    "check": "bash check-server.sh",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"

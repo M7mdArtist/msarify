@@ -34,7 +34,7 @@ else
   echo "ℹ️ مجلد المشروع ليس مستودع Git، تخطي git pull."
 fi
 
-# 2. Check and prepare database directory
+# 2. Check and prepare database directory & file permissions
 if [ -f .env ]; then
   ENV_DB_PATH=$(grep -E '^\s*DB_PATH=' .env | cut -d '=' -f2 | tr -d ' "\r\n' || true)
   if [ -n "$ENV_DB_PATH" ]; then
@@ -43,7 +43,14 @@ if [ -f .env ]; then
       echo "📁 إنشاء مجلد قاعدة البيانات: $DB_DIR"
       mkdir -p "$DB_DIR" 2>/dev/null || true
     fi
+    if [ -f "$ENV_DB_PATH" ]; then
+      chmod 666 "$ENV_DB_PATH" 2>/dev/null || true
+    fi
   fi
+fi
+chmod 666 data.db 2>/dev/null || true
+if [ -f "/home/msarify/database.sqlite" ]; then
+  chmod 666 "/home/msarify/database.sqlite" 2>/dev/null || true
 fi
 
 # 3. Install dependencies (including tsx for running server)
@@ -54,27 +61,20 @@ npm install --prefer-offline --no-audit || npm install
 echo "🏗️ بناء الواجهة الأمامية (npm run build)..."
 npm run build
 
-# 5. Start or Restart process via PM2
+# 5. Start or Restart process via PM2 (Fork Mode)
 echo "🔄 التحقق من تشغيل الموقع عبر PM2..."
 
 if command -v pm2 >/dev/null 2>&1; then
-  if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-    echo "🔄 العملية '$APP_NAME' مسجلة في PM2، جاري إعادة تشغيلها وتحديث المتغيرات..."
-    pm2 restart "$APP_NAME" --update-env 2>/dev/null || pm2 restart ecosystem.config.cjs --update-env 2>/dev/null || {
-      echo "⚠️ إعادة التشغيل واجهت مشكلة، جاري حذف العملية القديمة وبدء تشغيل نظيف..."
-      pm2 delete "$APP_NAME" 2>/dev/null || true
-      pm2 start ecosystem.config.cjs --update-env
-    }
+  echo "🧹 تنظيف العملية السابقة والتأكد من العمل بوضع fork المستقر..."
+  pm2 delete "$APP_NAME" 2>/dev/null || true
+  
+  if [ -f "ecosystem.config.cjs" ]; then
+    pm2 start ecosystem.config.cjs --update-env
   else
-    echo "⚡ العملية '$APP_NAME' ليست قيد التشغيل. جاري تشغيلها الآن..."
-    if [ -f "ecosystem.config.cjs" ]; then
-      pm2 start ecosystem.config.cjs --update-env
-    else
-      pm2 start npm --name "$APP_NAME" -- start --update-env
-    fi
+    pm2 start ./node_modules/.bin/tsx --name "$APP_NAME" -- server.ts
   fi
   pm2 save
-  echo "✅ تم حفظ تكوين PM2 بنجاح."
+  echo "✅ تم تشغيل وحفظ تكوين PM2 بنجاح."
 else
   echo "⚠️ تنبيه: PM2 غير مثبت في النظام."
   if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
