@@ -92,6 +92,25 @@ export interface DiscordBotStatus {
   notificationsEnabled?: boolean;
 }
 
+export interface DiscordAdminChannelInfo {
+  id: string;
+  name: string;
+  topic: string;
+  key: string;
+}
+
+export interface DiscordAdminSettings {
+  targetId: string;
+  logsEnabled: boolean;
+  backupEnabled: boolean;
+  lastBackupAt?: string;
+  botOnline: boolean;
+  targetName?: string;
+  serverName?: string;
+  categoryName?: string;
+  channels?: DiscordAdminChannelInfo[];
+}
+
 export interface AppNotification {
   id: string;
   title: string;

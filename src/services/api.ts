@@ -1,4 +1,4 @@
-import { Transaction, Subscription, Snapshot, UserProfile, DiscordBotStatus } from "../types";
+import { Transaction, Subscription, Snapshot, UserProfile, DiscordBotStatus, DiscordAdminSettings } from "../types";
 
 const API_BASE = "/api";
 
@@ -215,6 +215,78 @@ export const api = {
       const data = await res.json();
       throw new Error(data.error || "Failed to delete user");
     }
+  },
+
+  async getDiscordAdminSettings(): Promise<DiscordAdminSettings> {
+    const res = await fetch(`${API_BASE}/admin/discord-settings`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem('token')}` }
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to get admin discord settings");
+    }
+    return res.json();
+  },
+
+  async saveDiscordAdminSettings(settings: Partial<DiscordAdminSettings>): Promise<void> {
+    const res = await fetch(`${API_BASE}/admin/discord-settings`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}` 
+      },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to save admin discord settings");
+    }
+  },
+
+  async setupDiscordChannels(targetId?: string): Promise<{ success: boolean; message: string; channelsList?: any[] }> {
+    const res = await fetch(`${API_BASE}/admin/discord-setup-channels`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}` 
+      },
+      body: JSON.stringify({ targetId }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to setup Discord channels");
+    }
+    return data;
+  },
+
+  async sendDiscordTestLog(): Promise<{ status: string; message: string }> {
+    const res = await fetch(`${API_BASE}/admin/discord-test-log`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}` 
+      },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to send test log");
+    }
+    return data;
+  },
+
+  async triggerDiscordBackup(): Promise<{ success: boolean; message: string; channelName?: string }> {
+    const res = await fetch(`${API_BASE}/admin/discord-trigger-backup`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem('token')}` 
+      },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to trigger database backup");
+    }
+    return data;
   },
 
   async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {

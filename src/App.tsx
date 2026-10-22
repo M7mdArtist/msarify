@@ -49,7 +49,8 @@ import {
   Key,
   RefreshCw,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Database
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
@@ -96,7 +97,8 @@ import {
   TransactionType,
   Snapshot,
   AppNotification,
-  DiscordBotStatus
+  DiscordBotStatus,
+  DiscordAdminSettings
 } from './types';
 import { 
   subMonths, 
@@ -3385,14 +3387,28 @@ function NotificationsModal({
 }
 
 function AdminPanel({ onClose, language, t }: { onClose: () => void, language: string, t: any }) {
+  const [adminTab, setAdminTab] = useState<'users' | 'broadcast' | 'discord'>('users');
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [broadcastTitle, setBroadcastTitle] = useState('');
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [sending, setSending] = useState(false);
 
+  // Discord Admin & Backup state
+  const [discordSettings, setDiscordSettings] = useState<DiscordAdminSettings | null>(null);
+  const [discordTarget, setDiscordTarget] = useState('');
+  const [discordLogsEnabled, setDiscordLogsEnabled] = useState(true);
+  const [discordBackupEnabled, setDiscordBackupEnabled] = useState(true);
+  const [loadingDiscord, setLoadingDiscord] = useState(false);
+  const [savingDiscord, setSavingDiscord] = useState(false);
+  const [testingDiscord, setTestingDiscord] = useState(false);
+  const [backingUpDiscord, setBackingUpDiscord] = useState(false);
+  const [settingUpChannels, setSettingUpChannels] = useState(false);
+  const [discordFeedback, setDiscordFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   useEffect(() => {
     loadUsers();
+    loadDiscordSettings();
   }, []);
 
   const loadUsers = async () => {
@@ -3404,6 +3420,21 @@ function AdminPanel({ onClose, language, t }: { onClose: () => void, language: s
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDiscordSettings = async () => {
+    setLoadingDiscord(true);
+    try {
+      const data = await api.getDiscordAdminSettings();
+      setDiscordSettings(data);
+      setDiscordTarget(data.targetId || '');
+      setDiscordLogsEnabled(Boolean(data.logsEnabled));
+      setDiscordBackupEnabled(Boolean(data.backupEnabled));
+    } catch (err) {
+      console.error("Failed to load discord settings:", err);
+    } finally {
+      setLoadingDiscord(false);
     }
   };
 
@@ -3422,150 +3453,503 @@ function AdminPanel({ onClose, language, t }: { onClose: () => void, language: s
     }
   };
 
+  const handleSaveDiscordSettings = async () => {
+    setSavingDiscord(true);
+    setDiscordFeedback(null);
+    try {
+      await api.saveDiscordAdminSettings({
+        targetId: discordTarget.trim(),
+        logsEnabled: discordLogsEnabled,
+        backupEnabled: discordBackupEnabled
+      });
+      await loadDiscordSettings();
+      setDiscordFeedback({ 
+        type: 'success', 
+        message: language === 'ar' ? 'تم حفظ إعدادات ديسكورد وتهيئة الرومات بنجاح!' : (t.discord_settings_saved || 'Discord settings saved successfully') 
+      });
+    } catch (err: any) {
+      setDiscordFeedback({ type: 'error', message: err.message || 'فشل حفظ الإعدادات' });
+    } finally {
+      setSavingDiscord(false);
+    }
+  };
+
+  const handleSetupChannels = async () => {
+    if (!discordTarget.trim()) {
+      setDiscordFeedback({ 
+        type: 'error', 
+        message: language === 'ar' ? 'يرجى إدخال معرّف السيرفر (Server ID) أولاً' : 'Please enter your Discord Server ID first' 
+      });
+      return;
+    }
+    setSettingUpChannels(true);
+    setDiscordFeedback(null);
+    try {
+      const res = await api.setupDiscordChannels(discordTarget.trim());
+      setDiscordFeedback({ 
+        type: 'success', 
+        message: res.message || (t.discord_channels_created_success || 'تم إنشاء الكاتاقوري 📁 MSARIFY ورومات اللوقات بنجاح في سيرفرك!') 
+      });
+      await loadDiscordSettings();
+    } catch (err: any) {
+      setDiscordFeedback({ 
+        type: 'error', 
+        message: err.message || 'فشل إعداد الرومات. تأكد من أن البوت لديه صلاحية Manage Channels في السيرفر' 
+      });
+    } finally {
+      setSettingUpChannels(false);
+    }
+  };
+
+  const handleSendTestLog = async () => {
+    if (!discordTarget.trim()) {
+      setDiscordFeedback({ 
+        type: 'error', 
+        message: language === 'ar' ? 'يرجى إدخال معرف السيرفر أو الروم أولاً وحفظ الإعدادات' : 'Please specify a Discord Server ID or Channel ID first and save settings' 
+      });
+      return;
+    }
+    setTestingDiscord(true);
+    setDiscordFeedback(null);
+    try {
+      const res = await api.sendDiscordTestLog();
+      setDiscordFeedback({ type: 'success', message: res.message || 'تم إرسال اللوق التجريبي بنجاح إلى ديسكورد!' });
+      await loadDiscordSettings();
+    } catch (err: any) {
+      setDiscordFeedback({ type: 'error', message: err.message || 'فشل إرسال اللوق التجريبي. تأكد من صحة المعرف وتواجد البوت في السيرفر' });
+    } finally {
+      setTestingDiscord(false);
+    }
+  };
+
+  const handleTriggerBackup = async () => {
+    if (!discordTarget.trim()) {
+      setDiscordFeedback({ 
+        type: 'error', 
+        message: language === 'ar' ? 'يرجى إدخال معرف السيرفر أو الروم أولاً وحفظ الإعدادات' : 'Please specify a Discord Server ID or Channel ID first and save settings' 
+      });
+      return;
+    }
+    setBackingUpDiscord(true);
+    setDiscordFeedback(null);
+    try {
+      const res = await api.triggerDiscordBackup();
+      setDiscordFeedback({ type: 'success', message: res.message || (t.discord_backup_triggered || 'تم إرسال النسخة الاحتياطية بنجاح إلى ديسكورد!') });
+      await loadDiscordSettings();
+    } catch (err: any) {
+      setDiscordFeedback({ type: 'error', message: err.message || 'فشل إرسال النسخة الاحتياطية. تأكد من صلاحيات البوت وحجم الملف' });
+    } finally {
+      setBackingUpDiscord(false);
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-zinc-100/95 dark:bg-zinc-950/95 backdrop-blur-3xl"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 bg-zinc-100/95 dark:bg-zinc-950/95 backdrop-blur-3xl"
     >
       <motion.div 
         initial={{ scale: 0.9, y: 30 }}
         animate={{ scale: 1, y: 0 }}
-        className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        className="w-full max-w-2xl bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-[2.5rem] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
       >
-        <div className="p-8 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-white dark:bg-zinc-900 sticky top-0 z-10">
+        {/* Header */}
+        <div className="p-6 sm:p-8 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-white dark:bg-zinc-900 sticky top-0 z-10">
           <div>
             <h2 className="text-2xl font-black text-emerald-600 dark:text-emerald-500 uppercase italic tracking-tighter">{t.admin_panel}</h2>
             <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-black uppercase tracking-widest mt-1 italic">{t.admin_panel_desc}</p>
           </div>
-          <button onClick={onClose} className="p-4 bg-zinc-100 dark:bg-zinc-950 border border-black/5 dark:border-white/5 rounded-2xl text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-all font-bold">
-            <X size={24} />
+          <button onClick={onClose} className="p-3.5 bg-zinc-100 dark:bg-zinc-950 border border-black/5 dark:border-white/5 rounded-2xl text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-all font-bold">
+            <X size={22} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
-          {/* Broadcast Section */}
-          <div className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-600 dark:text-amber-500">
-                <Bell size={24} />
-              </div>
-              <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.broadcast_notif}</h3>
-            </div>
-            
-            <div className="space-y-4">
-              <input 
-                type="text"
-                placeholder={t.broadcast_notif_title}
-                value={broadcastTitle}
-                onChange={(e) => setBroadcastTitle(e.target.value)}
-                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold"
-              />
-              <textarea 
-                placeholder={t.broadcast_notif_msg}
-                value={broadcastMessage}
-                onChange={(e) => setBroadcastMessage(e.target.value)}
-                rows={3}
-                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold resize-none"
-              />
-              <button 
-                onClick={handleBroadcast}
-                disabled={sending || !broadcastTitle || !broadcastMessage}
-                className="w-full py-5 bg-zinc-900 dark:bg-amber-500 text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl shadow-amber-500/10 disabled:opacity-50 italic uppercase tracking-widest text-xs"
-              >
-                {sending ? t.sending_broadcast : t.send_broadcast}
-              </button>
-            </div>
-          </div>
+        {/* Tab Navigation */}
+        <div className="px-6 sm:px-8 pt-4 pb-2 border-b border-black/5 dark:border-white/5 bg-zinc-50/50 dark:bg-zinc-950/30 flex gap-2 overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => setAdminTab('users')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all uppercase tracking-wider shrink-0 ${
+              adminTab === 'users'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                : 'bg-white dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-black/5 dark:border-white/5'
+            }`}
+          >
+            <Users size={15} />
+            <span>{t.users_list} ({users.length})</span>
+          </button>
 
-          <div className="w-full h-px bg-black/5 dark:bg-white/5"></div>
+          <button
+            onClick={() => setAdminTab('broadcast')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all uppercase tracking-wider shrink-0 ${
+              adminTab === 'broadcast'
+                ? 'bg-amber-500 text-zinc-950 shadow-lg shadow-amber-500/20'
+                : 'bg-white dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-black/5 dark:border-white/5'
+            }`}
+          >
+            <Bell size={15} />
+            <span>{t.broadcast_notif}</span>
+          </button>
 
-          {/* Users List Section */}
-          <div className="space-y-6 pb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-600 dark:text-blue-500">
-                  <Users size={24} />
+          <button
+            onClick={() => setAdminTab('discord')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all uppercase tracking-wider shrink-0 ${
+              adminTab === 'discord'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
+                : 'bg-white dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-black/5 dark:border-white/5'
+            }`}
+          >
+            <Bot size={15} />
+            <span>{language === 'ar' ? 'ديسكورد والنسخ الاحتياطي' : 'Discord & Backup'}</span>
+          </button>
+        </div>
+
+        {/* Tab Content */}
+        <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6 custom-scrollbar">
+          
+          {/* TAB 1: USERS LIST */}
+          {adminTab === 'users' && (
+            <div className="space-y-6 pb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-600 dark:text-blue-500">
+                    <Users size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.users_list}</h3>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">إدارة حسابات مستخدمي النظام وكلمات المرور</p>
+                  </div>
                 </div>
-                <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.users_list}</h3>
+                <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 bg-zinc-50 dark:bg-zinc-950 px-3 py-1 rounded-full border border-black/5 dark:border-white/5 uppercase italic">
+                  {users.length} {t.users_count_suffix}
+                </span>
               </div>
-              <span className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 bg-zinc-50 dark:bg-zinc-950 px-3 py-1 rounded-full border border-black/5 dark:border-white/5 uppercase italic">
-                {users.length} {t.users_count_suffix}
-              </span>
-            </div>
 
-            <div className="space-y-3">
-              {loading ? (
-                <div className="py-10 text-center space-y-4">
-                  <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto"></div>
-                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest leading-relaxed italic">{t.loading_users}</p>
-                </div>
-              ) : (
-                users.map(u => (
-                  <div key={u.id} className="p-5 bg-zinc-50/50 dark:bg-zinc-950/50 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-5 hover:border-blue-500/30 transition-all group">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-1">
-                        <p className="font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{u.displayName}</p>
-                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-black italic">{u.email}</p>
+              <div className="space-y-3">
+                {loading ? (
+                  <div className="py-12 text-center space-y-4">
+                    <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto"></div>
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest leading-relaxed italic">{t.loading_users}</p>
+                  </div>
+                ) : (
+                  users.map(u => (
+                    <div key={u.id} className="p-5 bg-zinc-50/50 dark:bg-zinc-950/50 rounded-2xl border border-black/5 dark:border-white/5 space-y-4 hover:border-blue-500/30 transition-all group">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <p className="font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter">{u.displayName}</p>
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 font-black italic">{u.email}</p>
+                        </div>
+                        {u.isAdmin ? (
+                          <div className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 px-3 py-1 rounded-lg text-[10px] font-black border border-emerald-500/20 flex items-center gap-1.5 shadow-sm italic uppercase">
+                            <Shield size={10} />
+                            {t.admin_tag || 'ADMIN'}
+                          </div>
+                        ) : (
+                          <div className="bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 px-3 py-1 rounded-lg text-[10px] font-black flex items-center gap-1.5 italic uppercase">
+                            <UserIcon size={10} />
+                            {t.standard_user}
+                          </div>
+                        )}
                       </div>
-                      {u.isAdmin ? (
-                        <div className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 px-3 py-1 rounded-lg text-[10px] font-black border border-emerald-500/20 flex items-center gap-1.5 shadow-sm italic uppercase">
-                          <Shield size={10} />
-                          {t.admin_tag || 'ADMIN'}
-                        </div>
-                      ) : (
-                        <div className="bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 px-3 py-1 rounded-lg text-[10px] font-black flex items-center gap-1.5 italic uppercase">
-                          <UserIcon size={10} />
-                          {t.standard_user}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={async () => {
-                          const pass = prompt(`${t.confirm_password_reset} (${u.displayName}):`);
-                          if (pass && pass.length >= 6) {
-                            try {
-                              await api.resetUserPassword(u.id, pass);
-                              alert(t.password_reset_success);
-                            } catch (e: any) {
-                              alert(e.message || t.password_reset_failed);
-                            }
-                          } else if (pass) {
-                            alert(t.password_min_length);
-                          }
-                        }}
-                        className="flex-1 py-3 bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 rounded-xl text-[10px] font-black text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-400 dark:hover:text-white transition-all active:scale-95 italic uppercase tracking-widest"
-                      >
-                        {t.reset_password}
-                      </button>
                       
-                      {!u.isAdmin && (
+                      <div className="flex gap-2.5">
                         <button 
                           onClick={async () => {
-                            if (confirm(t.delete_user_confirm)) {
+                            const pass = prompt(`${t.confirm_password_reset} (${u.displayName}):`);
+                            if (pass && pass.length >= 6) {
                               try {
-                                await api.deleteUser(u.id);
-                                loadUsers();
-                                alert(t.delete_user_success);
+                                await api.resetUserPassword(u.id, pass);
+                                alert(t.password_reset_success);
                               } catch (e: any) {
-                                alert(e.message || t.delete_user_failed);
+                                alert(e.message || t.password_reset_failed);
                               }
+                            } else if (pass) {
+                              alert(t.password_min_length);
                             }
                           }}
-                          className="px-4 py-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 hover:bg-rose-500 hover:text-white transition-all active:scale-90"
+                          className="flex-1 py-2.5 bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 rounded-xl text-[10px] font-black text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white dark:hover:bg-blue-400 dark:hover:text-white transition-all active:scale-95 italic uppercase tracking-widest"
                         >
-                          <Trash2 size={16} />
+                          {t.reset_password}
                         </button>
-                      )}
+                        
+                        {!u.isAdmin && (
+                          <button 
+                            onClick={async () => {
+                              if (confirm(t.delete_user_confirm)) {
+                                try {
+                                  await api.deleteUser(u.id);
+                                  loadUsers();
+                                  alert(t.delete_user_success);
+                                } catch (e: any) {
+                                  alert(e.message || t.delete_user_failed);
+                                }
+                              }
+                            }}
+                            className="px-3.5 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 hover:bg-rose-500 hover:text-white transition-all active:scale-90"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: BROADCAST SECTION */}
+          {adminTab === 'broadcast' && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-600 dark:text-amber-500">
+                  <Bell size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.broadcast_notif}</h3>
+                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">إرسال تنبيه فوري يصل لجميع المستخدمين داخل التطبيق</p>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">عنوان التعميم</label>
+                  <input 
+                    type="text"
+                    placeholder={t.broadcast_notif_title}
+                    value={broadcastTitle}
+                    onChange={(e) => setBroadcastTitle(e.target.value)}
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">نص الرسالة</label>
+                  <textarea 
+                    placeholder={t.broadcast_notif_msg}
+                    value={broadcastMessage}
+                    onChange={(e) => setBroadcastMessage(e.target.value)}
+                    rows={4}
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-amber-500/30 transition-all font-bold resize-none"
+                  />
+                </div>
+                <button 
+                  onClick={handleBroadcast}
+                  disabled={sending || !broadcastTitle || !broadcastMessage}
+                  className="w-full py-4 bg-zinc-900 dark:bg-amber-500 text-white dark:text-zinc-950 font-black rounded-2xl active:scale-95 transition-all shadow-xl shadow-amber-500/10 disabled:opacity-50 italic uppercase tracking-widest text-xs flex items-center justify-center gap-2"
+                >
+                  <Send size={15} />
+                  <span>{sending ? t.sending_broadcast : t.send_broadcast}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: DISCORD ADMIN LOGS & DAILY BACKUP */}
+          {adminTab === 'discord' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-600 dark:text-indigo-400">
+                    <Bot size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">{t.discord_admin_title}</h3>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{t.discord_admin_desc}</p>
+                  </div>
+                </div>
+                <div className={`px-3 py-1 rounded-full text-[10px] font-black flex items-center gap-1.5 border ${
+                  discordSettings?.botOnline 
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 border-black/5 dark:border-white/5'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${discordSettings?.botOnline ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`}></span>
+                  {discordSettings?.botOnline ? t.discord_online : t.discord_standby}
+                </div>
+              </div>
+
+              {/* Feedback Alert */}
+              {discordFeedback && (
+                <div className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between border ${
+                  discordFeedback.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'
+                }`}>
+                  <span>{discordFeedback.message}</span>
+                  <button onClick={() => setDiscordFeedback(null)} className="p-1 hover:opacity-75">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Server, Category and Channels Info Box */}
+              {discordSettings?.serverName && (
+                <div className="p-5 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-2xl border border-indigo-500/20 space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Database size={16} className="text-indigo-600 dark:text-indigo-400" />
+                      <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">
+                        {language === 'ar' ? 'السيرفر المعتمد:' : 'Connected Server:'}
+                      </span>
+                      <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-xl">
+                        {discordSettings.serverName}
+                      </span>
+                    </div>
+
+                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-xl border border-emerald-500/20 flex items-center gap-1.5">
+                      <span>📁</span>
+                      <span>{discordSettings.categoryName || '📁 MSARIFY'}</span>
+                    </span>
+                  </div>
+
+                  {/* Channels List */}
+                  <div className="pt-2 border-t border-indigo-500/10 space-y-2">
+                    <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
+                      {t.discord_dedicated_rooms || 'الرومات المخصصة التلقائية (بادئة msarify-):'}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="p-2.5 bg-white/90 dark:bg-zinc-900/90 rounded-xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs">
+                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">#msarify-backups</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{language === 'ar' ? '💾 النسخ الاحتياطية' : '💾 Backups'}</span>
+                      </div>
+                      <div className="p-2.5 bg-white/90 dark:bg-zinc-900/90 rounded-xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs">
+                        <span className="font-mono font-bold text-blue-600 dark:text-blue-400">#msarify-users</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{language === 'ar' ? '👥 تسجيل المستخدمين' : '👥 User Signups'}</span>
+                      </div>
+                      <div className="p-2.5 bg-white/90 dark:bg-zinc-900/90 rounded-xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs">
+                        <span className="font-mono font-bold text-rose-600 dark:text-rose-400">#msarify-security</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{language === 'ar' ? '🔐 الأمان وكلمات المرور' : '🔐 Security & Passwords'}</span>
+                      </div>
+                      <div className="p-2.5 bg-white/90 dark:bg-zinc-900/90 rounded-xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs">
+                        <span className="font-mono font-bold text-amber-600 dark:text-amber-400">#msarify-broadcasts</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{language === 'ar' ? '📢 التعاميم والإعلانات' : '📢 Broadcasts'}</span>
+                      </div>
+                      <div className="p-2.5 bg-white/90 dark:bg-zinc-900/90 rounded-xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs sm:col-span-2">
+                        <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">#msarify-system</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{language === 'ar' ? '⚡ حالة النظام وتشغيل السيرفر' : '⚡ System & Boots'}</span>
+                      </div>
                     </div>
                   </div>
-                ))
+                </div>
               )}
+
+              {/* Target ID Input */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block">
+                  {t.discord_server_id_label || t.discord_target_label}
+                </label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    placeholder={t.discord_server_id_placeholder || t.discord_target_placeholder}
+                    value={discordTarget}
+                    onChange={(e) => setDiscordTarget(e.target.value)}
+                    className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-black/5 dark:border-white/5 p-4 rounded-2xl text-zinc-900 dark:text-white outline-none focus:border-indigo-500/30 transition-all font-mono text-sm font-bold"
+                  />
+                  <button
+                    onClick={handleSetupChannels}
+                    disabled={settingUpChannels || !discordTarget}
+                    className="px-4 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-2xl text-[11px] font-black transition-all active:scale-95 disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5"
+                    title={t.discord_setup_channels_btn || 'إنشاء وتهيئة الرومات والكاتاقوري'}
+                  >
+                    <span>⚡</span>
+                    <span className="hidden sm:inline">{settingUpChannels ? t.loading_dots : (language === 'ar' ? 'تهيئة الرومات' : 'Setup Channels')}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 leading-relaxed font-medium">
+                  {language === 'ar' 
+                    ? '💡 ضع Server ID الخاص بسيرفرك، وسيقوم البوت تلقائياً بإنشاء كاتاقوري جديد باسم 📁 MSARIFY ورومات مخصصة لكل نوع لوق تبدأ بـ msarify-.' 
+                    : '💡 Enter your Discord Server ID. The bot will automatically create a new category 📁 MSARIFY and dedicated channels prefixed with msarify- for each log type.'}
+                </p>
+              </div>
+
+              {/* Options Toggles */}
+              <div className="space-y-3 pt-2">
+                {/* Admin Logs Toggle */}
+                <div 
+                  onClick={() => setDiscordLogsEnabled(!discordLogsEnabled)}
+                  className="p-4 bg-zinc-50/80 dark:bg-zinc-950/80 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between cursor-pointer hover:border-indigo-500/30 transition-all select-none"
+                >
+                  <div className="space-y-1">
+                    <p className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-tight">
+                      {t.discord_admin_logs_enable}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold">
+                      {language === 'ar' 
+                        ? 'إرسال لوقات تسجيل المستخدمين، تغيير كلمات المرور، التعاميم وحالة السيرفر لكل روم مخصص' 
+                        : 'Send user registrations, password resets, broadcasts, and system boots to their dedicated channels'}
+                    </p>
+                  </div>
+                  <div className={`w-11 h-6 rounded-full transition-colors relative flex items-center p-0.5 ${discordLogsEnabled ? 'bg-indigo-600' : 'bg-zinc-300 dark:bg-zinc-800'}`}>
+                    <div className={`w-5 h-5 rounded-full bg-white transition-transform ${discordLogsEnabled ? (language === 'ar' ? '-translate-x-5' : 'translate-x-5') : 'translate-x-0'}`} />
+                  </div>
+                </div>
+
+                {/* Daily Backup Toggle */}
+                <div 
+                  onClick={() => setDiscordBackupEnabled(!discordBackupEnabled)}
+                  className="p-4 bg-zinc-50/80 dark:bg-zinc-950/80 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between cursor-pointer hover:border-indigo-500/30 transition-all select-none"
+                >
+                  <div className="space-y-1">
+                    <p className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-tight">
+                      {t.discord_daily_backup_enable}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold">
+                      {language === 'ar' 
+                        ? 'إرسال ملف قاعدة البيانات .sqlite تلقائياً كل 24 ساعة إلى روم #msarify-backups' 
+                        : 'Automatically send full database snapshot .sqlite every 24 hours to #msarify-backups'}
+                    </p>
+                  </div>
+                  <div className={`w-11 h-6 rounded-full transition-colors relative flex items-center p-0.5 ${discordBackupEnabled ? 'bg-indigo-600' : 'bg-zinc-300 dark:bg-zinc-800'}`}>
+                    <div className={`w-5 h-5 rounded-full bg-white transition-transform ${discordBackupEnabled ? (language === 'ar' ? '-translate-x-5' : 'translate-x-5') : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Last Backup Info */}
+              <div className="p-4 bg-zinc-100/50 dark:bg-zinc-950/50 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-xs">
+                <span className="text-zinc-500 dark:text-zinc-400 font-bold">{t.discord_last_backup}:</span>
+                <span className="font-mono font-bold text-zinc-900 dark:text-white">
+                  {discordSettings?.lastBackupAt 
+                    ? new Date(discordSettings.lastBackupAt).toLocaleString(language === 'ar' ? 'ar-SA' : 'en-US') 
+                    : t.discord_never_backed_up}
+                </span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-3 pt-2">
+                <button
+                  onClick={handleSaveDiscordSettings}
+                  disabled={savingDiscord}
+                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl active:scale-95 transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+                >
+                  <Check size={16} />
+                  <span>{savingDiscord ? t.loading_dots : t.discord_save_admin_settings}</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={handleSendTestLog}
+                    disabled={testingDiscord || !discordTarget}
+                    className="py-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-black rounded-xl active:scale-95 transition-all disabled:opacity-40 text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
+                  >
+                    <Send size={14} />
+                    <span>{testingDiscord ? t.loading_dots : t.discord_send_test_log}</span>
+                  </button>
+
+                  <button
+                    onClick={handleTriggerBackup}
+                    disabled={backingUpDiscord || !discordTarget}
+                    className="py-3 bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-600/20 text-emerald-600 dark:text-emerald-400 font-black rounded-xl active:scale-95 transition-all disabled:opacity-40 text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
+                  >
+                    <Database size={14} />
+                    <span>{backingUpDiscord ? t.loading_dots : t.discord_backup_now}</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
+
         </div>
       </motion.div>
     </motion.div>

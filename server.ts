@@ -19,7 +19,12 @@ import {
   unlinkDiscord, 
   setDiscordNotifications, 
   linkDiscordManual,
-  generateDiscordKey 
+  generateDiscordKey,
+  sendAdminDiscordLog,
+  sendDailyBackupDiscord,
+  getDiscordAdminSettings,
+  saveDiscordAdminSettings,
+  ensureMsarifyCategoryAndChannels
 } from "./src/server/discordBot";
 
 dotenv.config();
@@ -622,6 +627,7 @@ async function startServer() {
       }
 
       // Start transaction to clean up user data
+      const targetUser: any = db.prepare("SELECT displayName, email FROM users WHERE id = ?").get(targetId);
       const deleteUser = db.transaction(() => {
         db.prepare("DELETE FROM transactions WHERE userId = ?").run(targetId);
         db.prepare("DELETE FROM notifications WHERE userId = ?").run(targetId);
@@ -629,6 +635,17 @@ async function startServer() {
       });
 
       deleteUser();
+
+      try {
+        sendAdminDiscordLog({
+          title: "حذف حساب مستخدم",
+          description: `قام المدير بحذف حساب المستخدم **${targetUser?.displayName || targetUser?.email || targetId}**.`,
+          type: "user",
+          fields: [
+            { name: "📧 البريد الإلكتروني", value: targetUser?.email || "غير متوفر", inline: true }
+          ]
+        }).catch(() => {});
+      } catch {}
 
       res.json({ success: true, message: "User deleted successfully" });
     } catch (err) {
@@ -649,6 +666,22 @@ async function startServer() {
       `).run(id, displayName, email, hashedPassword);
       
       const token = jwt.sign({ id, email, displayName }, JWT_SECRET, { expiresIn: "7d" });
+
+      // Notify Discord Admin channel of new signup
+      try {
+        const totalUsers = db.prepare("SELECT count(*) as c FROM users").get()?.c || 1;
+        sendAdminDiscordLog({
+          title: "تسجيل مستخدم جديد في المنصة",
+          description: `انضم مستخدم جديد إلى تطبيق مصاريفي: **${displayName}**`,
+          type: "user",
+          fields: [
+            { name: "👤 اسم المستخدم", value: displayName, inline: true },
+            { name: "📧 البريد الإلكتروني", value: email, inline: true },
+            { name: "👥 إجمالي المستخدمين الآن", value: `${totalUsers} مستخدم`, inline: true }
+          ]
+        }).catch(() => {});
+      } catch {}
+
       res.json({ 
         token, 
         user: { 
@@ -1179,6 +1212,21 @@ async function startServer() {
     });
 
     transaction(users);
+
+    // Notify Discord Admin Channel of Broadcast
+    try {
+      sendAdminDiscordLog({
+        title: "إرسال تعميم إداري جماعي",
+        description: `قام المدير بإرسال تعميم تنبيهي لكافة المستخدمين.`,
+        type: "broadcast",
+        fields: [
+          { name: "📢 عنوان التعميم", value: title, inline: true },
+          { name: "👥 عدد المستلمين", value: `${users.length} مستخدم`, inline: true },
+          { name: "💬 نص الرسالة", value: message, inline: false }
+        ]
+      }).catch(() => {});
+    } catch {}
+
     res.json({ status: "ok", count: users.length });
   });
 
@@ -1190,6 +1238,19 @@ async function startServer() {
     try {
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, req.params.uid);
+
+      try {
+        const targetUser: any = db.prepare("SELECT displayName, email FROM users WHERE id = ?").get(req.params.uid);
+        sendAdminDiscordLog({
+          title: "إعادة تعيين كلمة مرور مستخدم",
+          description: `تمت إعادة تعيين كلمة المرور للمستخدم **${targetUser?.displayName || targetUser?.email || req.params.uid}** من قِبل الإدارة.`,
+          type: "security",
+          fields: [
+            { name: "📧 البريد الإلكتروني", value: targetUser?.email || "غير متوفر", inline: true }
+          ]
+        }).catch(() => {});
+      } catch {}
+
       res.json({ status: "ok" });
     } catch (err) {
       res.status(500).json({ error: "فشل إعادة تعيين كلمة المرور" });
@@ -1199,15 +1260,115 @@ async function startServer() {
   app.post("/api/users/change-password", async (req, res) => {
     const { userId, oldPassword, newPassword } = req.body;
     try {
-      const user: any = db.prepare("SELECT password FROM users WHERE id = ?").get(userId);
+      const user: any = db.prepare("SELECT password, displayName, email FROM users WHERE id = ?").get(userId);
       if (!user || !(await bcrypt.compare(oldPassword, user.password))) {
         return res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة" });
       }
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, userId);
+
+      try {
+        sendAdminDiscordLog({
+          title: "تغيير كلمة المرور الشخصية",
+          description: `قام المستخدم **${user.displayName || user.email}** بتغيير كلمة المرور الخاصة بحسابه بنجاح.`,
+          type: "security",
+        }).catch(() => {});
+      } catch {}
+
       res.json({ status: "ok" });
     } catch (err) {
       res.status(500).json({ error: "فشل تغيير كلمة المرور" });
+    }
+  });
+
+  // Admin Discord Settings & Daily Backups
+  app.get("/api/admin/discord-settings", authenticateToken, async (req: any, res) => {
+    const admin = db.prepare("SELECT isAdmin FROM users WHERE id = ?").get(req.user.id);
+    if (!admin || !admin.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+    try {
+      const settings = await getDiscordAdminSettings();
+      res.json(settings);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to get settings" });
+    }
+  });
+
+  app.post("/api/admin/discord-settings", authenticateToken, async (req: any, res) => {
+    const admin = db.prepare("SELECT isAdmin FROM users WHERE id = ?").get(req.user.id);
+    if (!admin || !admin.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+    try {
+      const { targetId, logsEnabled, backupEnabled } = req.body;
+      await saveDiscordAdminSettings({ targetId, logsEnabled, backupEnabled });
+      res.json({ status: "ok" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save settings" });
+    }
+  });
+
+  app.post("/api/admin/discord-setup-channels", authenticateToken, async (req: any, res) => {
+    const admin = db.prepare("SELECT isAdmin FROM users WHERE id = ?").get(req.user.id);
+    if (!admin || !admin.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+    try {
+      const { targetId } = req.body;
+      const settings = await getDiscordAdminSettings();
+      const effectiveGuildId = (targetId || settings.targetId || "").trim();
+      if (!effectiveGuildId) {
+        return res.status(400).json({ error: "يرجى إدخال معرّف السيرفر (Server ID) أولاً" });
+      }
+
+      const result = await ensureMsarifyCategoryAndChannels(effectiveGuildId);
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json({ error: result.message });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to setup Discord channels" });
+    }
+  });
+
+  app.post("/api/admin/discord-test-log", authenticateToken, async (req: any, res) => {
+    const admin = db.prepare("SELECT isAdmin, displayName, email FROM users WHERE id = ?").get(req.user.id);
+    if (!admin || !admin.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+    try {
+      const ok = await sendAdminDiscordLog({
+        title: "فحص تجريبي للوقات الإدارة",
+        description: `تم إرسال هذا اللوق التجريبي للتأكد من اتصال لوحة الإدارة بالقناة بنجاح بواسطة المدير: **${admin.displayName || admin.email}**.`,
+        type: "success",
+        fields: [
+          { name: "🛡️ المدير", value: admin.displayName || admin.email, inline: true },
+          { name: "⏰ الوقت", value: new Date().toLocaleTimeString("ar-SA"), inline: true },
+          { name: "✅ الحالة", value: "متصل ويعمل بكفاءة", inline: true }
+        ]
+      });
+
+      if (ok) {
+        res.json({ status: "ok", message: "تم إرسال اللوق التجريبي إلى ديسكورد بنجاح!" });
+      } else {
+        res.status(400).json({ error: "تعذر إرسال اللوق التجريبي. تأكد من إدخال Server ID أو Channel ID الصحيح وأن البوت موجود بالسيرفر ولديه صلاحية إرسال الرسائل." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to send test log" });
+    }
+  });
+
+  app.post("/api/admin/discord-trigger-backup", authenticateToken, async (req: any, res) => {
+    const admin = db.prepare("SELECT isAdmin FROM users WHERE id = ?").get(req.user.id);
+    if (!admin || !admin.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+    try {
+      const result = await sendDailyBackupDiscord(true);
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json({ error: result.message });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to trigger backup" });
     }
   });
 
